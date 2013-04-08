@@ -82,12 +82,14 @@ struct proto_command {
 
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
+static CONN_STATUS do_READMEM(CONN *conn);
 
 #define DEFINE_CMD(name)	{ (sizeof(#name) - 1), (#name), (do_ ## name) }
 
 static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
+	DEFINE_CMD(READMEM),
 	{ 0, NULL }
 };
 
@@ -360,6 +362,88 @@ do_TERMINATE(CONN *conn)
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
 	if (status == conn_ok)
 		conn->terminate = 1;
+	return status;
+}
+
+static CONN_STATUS
+do_READMEM(CONN *conn)
+{
+	char *p = conn->cmd + conn->lastcmd->len;
+	char *endp = conn->cmd + conn->cmdlen;
+	char *tok, *endnum;
+	CONN_STATUS status;
+
+	/* Get starting address */
+	while (p != endp && *p == ' ')
+		++p;
+	for (tok = p; p != endp && *p != ' '; ++p);
+	*p = 0;
+	unsigned long addr = strtoul(tok, &endnum, 16);
+	if (p == tok || *endnum) {
+		static const char msg[] = "Invalid start address";
+		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+		return conn_bad;
+	}
+	if (p != endp)
+		++p;
+
+	/* Get byte count */
+	while (p != endp && *p == ' ')
+		++p;
+	for (tok = p; p != endp && *p != ' '; ++p);
+	*p = 0;
+	unsigned long bytecnt = strtoul(tok, &endnum, 16);
+	if (p == tok || *endnum) {
+		static const char msg[] = "Invalid byte count";
+		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+		return conn_bad;
+	}
+	if (p != endp)
+		++p;
+
+	/* Get (optional) memory type */
+	while (p != endp && *p == ' ')
+		++p;
+	for (tok = p; p != endp && *p != ' '; ++p)
+		*p = toupper(*p);
+	*p = 0;
+	int memtype = KVADDR;
+	if (p != tok) {
+		if (!strcmp(tok, "KVADDR"))
+			memtype = KVADDR;
+		else if (!strcmp(tok, "UVADDR"))
+			memtype = UVADDR;
+		else if (!strcmp(tok, "PHYSADDR"))
+			memtype = PHYSADDR;
+		else if (!strcmp(tok, "XENMACHADDR"))
+			memtype = XENMACHADDR;
+		else if (!strcmp(tok, "FILEADDR"))
+			memtype = FILEADDR;
+		else {
+			static const char msg[] = "Invalid memory type";
+			copy_string(&conn->resp, &conn->resplen,
+				    msg, sizeof(msg)-1);
+			return conn_bad;
+		}
+	}
+
+	char *buffer = malloc(bytecnt);
+	if (!buffer) {
+		static const char msg[] = "Buffer allocation failure";
+		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+		return conn_bad;
+	}
+
+	if (!readmem(addr, memtype, buffer, bytecnt,
+		     "crashgui", RETURN_ON_ERROR)) {
+		static const char msg[] = "Read error";
+		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+		return conn_no;
+	}
+
+	status = send_literal(conn, conn_dump, buffer, bytecnt);
+
+	free(buffer);
 	return status;
 }
 

@@ -52,6 +52,43 @@ Commands
                S: A025 OK TERMINATE completed
                (Server and client then close the connection)
 
+* READMEM command
+
+   Arguments:  start address
+               byte count
+               OPTIONAL memory type
+
+   Responses:  REQUIRED untagged responses: DUMP
+
+   Result:     OK - memory dump completed
+               NO - the specified memory location cannot be read
+               BAD - command unknown or arguments invalid
+
+      The READMEM command reads a chunk of memory and sends it as a string
+      (usually a literal). The arguments are interpreted as hexadecimal
+      numbers. The currently defined memory types are:
+
+      KVADDR
+         Kernel virtual address. This is the default if no memory type is
+         specified.
+
+      UVADDR
+         User-space virtual address.
+
+      PHYSADDR
+         Physical address.
+
+      XENMACHADDR
+         Machine address (Xen only).
+
+      FILEADDR
+         File address.
+
+   Example:    C: A026 READMEM c009bf2c 34
+               S: * DUMP {52}
+               S: <52 (that is 0x34) bytes of binary dump>
+               S: A026 OK DUMP completed
+
 Authentication
 --------------
 There is no authentication. The crashgui protocol is designed to operate
