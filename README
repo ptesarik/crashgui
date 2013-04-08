@@ -27,9 +27,9 @@ Commands
       before the (tagged) OK response, and then close the network
       connection.
 
-   Example:    C: R023 DISCONNECT
+   Example:    C: A024 DISCONNECT
                S: * BYE connection closing
-               S: A023 OK DISCONNECT completed
+               S: A024 OK DISCONNECT completed
                (Server and client then close the connection)
 
 * TERMINATE command
@@ -47,9 +47,9 @@ Commands
       MUST send a BYE untagged response before the (tagged) OK response,
       and then close the network connection.
 
-   Example:    C: R023 TERMINATE
+   Example:    C: A025 TERMINATE
                S: * BYE terminating crashgui server
-               S: A023 OK TERMINATE completed
+               S: A025 OK TERMINATE completed
                (Server and client then close the connection)
 
 Authentication
