@@ -289,7 +289,18 @@ run_command(CONN *conn)
 }
 
 static CONN_STATUS
-disconnect(CONN *conn)
+send_untagged(CONN *conn, CONN_STATUS status, const char *msg)
+{
+	CONN_STATUS oldstatus = conn->status;
+	conn->status = status;
+	copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
+	status = conn_respond(conn, 0);
+	conn->status = (status == conn_fatal) ? status : oldstatus;
+	return status;
+}
+
+static CONN_STATUS
+disconnect(CONN *conn, const char *reason)
 {
 	if (fclose(conn->fin)) {
 		char *err = strerror(errno);
@@ -298,29 +309,21 @@ disconnect(CONN *conn)
 	}
 
 	conn->fin = NULL;
-	return conn_ok;
+	return send_untagged(conn, conn_bye, reason);
 }
 
 static CONN_STATUS
 do_DISCONNECT(CONN *conn)
 {
-	CONN_STATUS status = disconnect(conn);
-	if (status == conn_ok) {
-		static const char msg[] = "Connection closing.";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-	}
-	return status;
+	return disconnect(conn, "connection closing");
 }
 
 static CONN_STATUS
 do_TERMINATE(CONN *conn)
 {
-	CONN_STATUS status = disconnect(conn);
-	if (status == conn_ok) {
-		static const char msg[] = "Terminating crashgui server.";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
+	if (status == conn_ok)
 		conn->terminate = 1;
-	}
 	return status;
 }
 
