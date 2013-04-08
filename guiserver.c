@@ -391,7 +391,7 @@ run_server(const char *path)
 		goto err_unlink;
 	}
 
-	while ( (fdin = accept(fd, NULL, NULL)) ) {
+	while ( (fdin = accept(fd, NULL, NULL)) >= 0) {
 		int fdout;
 		FILE *fin, *fout;
 
