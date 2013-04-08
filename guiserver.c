@@ -391,9 +391,8 @@ do_READMEM(CONN *conn)
 	while (p != endp && *p == ' ')
 		++p;
 	for (tok = p; p != endp && *p != ' '; ++p);
-	*p = 0;
 	unsigned long addr = strtoul(tok, &endnum, 16);
-	if (p == tok || *endnum) {
+	if (endnum != p || p == tok) {
 		static const char msg[] = "Invalid start address";
 		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
 		return conn_bad;
@@ -405,9 +404,8 @@ do_READMEM(CONN *conn)
 	while (p != endp && *p == ' ')
 		++p;
 	for (tok = p; p != endp && *p != ' '; ++p);
-	*p = 0;
 	unsigned long bytecnt = strtoul(tok, &endnum, 16);
-	if (p == tok || *endnum) {
+	if (endnum != p || p == tok) {
 		static const char msg[] = "Invalid byte count";
 		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
 		return conn_bad;
@@ -420,18 +418,18 @@ do_READMEM(CONN *conn)
 		++p;
 	for (tok = p; p != endp && *p != ' '; ++p)
 		*p = toupper(*p);
-	*p = 0;
 	int memtype = KVADDR;
-	if (p != tok) {
-		if (!strcmp(tok, "KVADDR"))
+	size_t len = p - tok;
+	if (len) {
+		if (len == 6 && !memcmp(tok, "KVADDR", 6))
 			memtype = KVADDR;
-		else if (!strcmp(tok, "UVADDR"))
+		else if (len == 6 && !memcmp(tok, "UVADDR", 6))
 			memtype = UVADDR;
-		else if (!strcmp(tok, "PHYSADDR"))
+		else if (len == 8 && !memcmp(tok, "PHYSADDR", 8))
 			memtype = PHYSADDR;
-		else if (!strcmp(tok, "XENMACHADDR"))
+		else if (len == 11 && !memcmp(tok, "XENMACHADDR", 11))
 			memtype = XENMACHADDR;
-		else if (!strcmp(tok, "FILEADDR"))
+		else if (len == 8 && !memcmp(tok, "FILEADDR", 8))
 			memtype = FILEADDR;
 		else {
 			static const char msg[] = "Invalid memory type";
