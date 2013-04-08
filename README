@@ -1,0 +1,58 @@
+The crashgui protocol
+---------------------
+The basic blocks of the protocol were taken from the IMAP4 protocol
+(see RFC3501), because:
+
+1. I didn't want to re-invent the wheel.
+2. The IMAP4 protocol can transmit binary blobs efficiently.
+3. The protocol can handle multiple requests in parallel.
+
+However, the set of commands is completely different from IMAP (because
+you're not accessing a mailbox, obviously).
+
+Commands
+--------
+
+* DISCONNECT command
+
+   Arguments:  none
+
+   Responses:  REQUIRED untagged response: BYE
+
+   Result:     OK - disconnect completed
+               BAD - command unknown or arguments invalid
+
+      The DISCONNECT command informs the server that the client is done
+      with the connection.  The server MUST send a BYE untagged response
+      before the (tagged) OK response, and then close the network
+      connection.
+
+   Example:    C: R023 DISCONNECT
+               S: * BYE connection closing
+               S: A023 OK DISCONNECT completed
+               (Server and client then close the connection)
+
+* TERMINATE command
+
+   Arguments:  none
+
+   Responses:  REQUIRED untagged response: BYE
+
+   Result:     OK - disconnect completed
+               BAD - command unknown or arguments invalid
+
+      The TERMINATE command requests the server to terminate. Since
+      the server no longer runs after this command completes, this
+      command also terminates the current connection.  The server
+      MUST send a BYE untagged response before the (tagged) OK response,
+      and then close the network connection.
+
+   Example:    C: R023 TERMINATE
+               S: * BYE terminating crashgui server
+               S: A023 OK TERMINATE completed
+               (Server and client then close the connection)
+
+Authentication
+--------------
+There is no authentication. The crashgui protocol is designed to operate
+on UNIX-domain sockets, so the normal system permissions apply.
