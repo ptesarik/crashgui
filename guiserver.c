@@ -32,8 +32,8 @@ typedef enum conn_status {
 	conn_no,		/* NO response */
 	conn_bye,		/* Connection terminating */
 	conn_dump,		/* DUMP response */
-	conn_eof,		/* End of stream */
 
+	conn_eof,		/* End of stream */
 	conn_fatal = -1		/* Fatal error */
 } CONN_STATUS;
 
@@ -235,11 +235,11 @@ do_respond(CONN *conn, int tagged)
 	const char *cond;
 	switch (conn->status) {
 	case conn_ok:	cond = "OK";  break;
-	case conn_bad:	cond = "BAD"; break;
 	case conn_no:	cond = "NO";  break;
 	case conn_bye:	cond = "BYE"; break;
 	case conn_dump:	cond = "DUMP"; break;
-	default:	cond = "ERR"; break;
+	case conn_bad:
+	default:	cond = "BAD"; break;
 	}
 	sz = fwrite(cond, 1, strlen(cond), conn->fout);
 	if (sz != strlen(cond))
