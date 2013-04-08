@@ -321,6 +321,21 @@ send_untagged(CONN *conn, CONN_STATUS status, const char *msg)
 }
 
 static CONN_STATUS
+send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
+{
+	char num[2 + 20 + 1];	/* enough to hold any 64-bit value */
+
+	snprintf(num, sizeof num, "{%lu}", (unsigned long) length);
+	status = send_untagged(conn, status, num);
+	if (status == conn_ok) {
+		size_t sz = fwrite(buffer, 1, length, conn->fout);
+		if (sz != length)
+			status = conn_fatal;
+	}
+	return status;
+}
+
+static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
 	if (fclose(conn->fin)) {
