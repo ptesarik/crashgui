@@ -211,15 +211,17 @@ conn_getcommand(CONN *conn)
 static CONN_STATUS
 do_respond(CONN *conn)
 {
+	size_t sz;
+
 	if (!conn->fout)
 		return conn_fatal;
 
-	size_t sz;
-	if (conn->taglen) {
-		sz = fwrite(conn->tag, 1, conn->taglen, conn->fout);
-		if (sz != conn->taglen)
-			return conn_fatal;
+	size_t taglen = conn->taglen;
+	if (taglen) {
 		conn->taglen = 0;
+		sz = fwrite(conn->tag, 1, taglen, conn->fout);
+		if (sz != taglen)
+			return conn_fatal;
 	} else if (putc('*', conn->fout) < 0)
 		return conn_fatal;
 
@@ -236,14 +238,15 @@ do_respond(CONN *conn)
 	if (sz != strlen(cond))
 		return conn_fatal;
 
-	if (conn->resplen) {
+	size_t resplen = conn->resplen;
+	if (resplen) {
+		conn->resplen = 0;
 		if (putc(' ', conn->fout) < 0)
 			return conn_fatal;
 
-		sz = fwrite(conn->resp, 1, conn->resplen, conn->fout);
-		if (sz != conn->resplen)
+		sz = fwrite(conn->resp, 1, resplen, conn->fout);
+		if (sz != resplen)
 			return conn_fatal;
-		conn->resplen = 0;
 	}
 
 	if (fwrite(crlf, 1, sizeof(crlf), conn->fout) != sizeof(crlf))
