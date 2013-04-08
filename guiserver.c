@@ -29,6 +29,7 @@ void guiserver_fini(void);    /* destructor function (optional) */
 typedef enum conn_status {
 	conn_ok,		/* OK */
 	conn_bad,		/* Malformed command */
+	conn_bye,		/* Connection terminating */
 	conn_eof,		/* End of stream */
 
 	conn_fatal = -1		/* Fatal error */
@@ -232,6 +233,7 @@ do_respond(CONN *conn, int tagged)
 	switch (conn->status) {
 	case conn_ok:	cond = "OK";  break;
 	case conn_bad:	cond = "BAD"; break;
+	case conn_bye:	cond = "BYE"; break;
 	default:	cond = "ERR"; break;
 	}
 	sz = fwrite(cond, 1, strlen(cond), conn->fout);
