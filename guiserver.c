@@ -209,7 +209,7 @@ conn_getcommand(CONN *conn)
 }
 
 static CONN_STATUS
-do_respond(CONN *conn)
+do_respond(CONN *conn, int tagged)
 {
 	size_t sz;
 
@@ -217,7 +217,7 @@ do_respond(CONN *conn)
 		return conn_fatal;
 
 	size_t taglen = conn->taglen;
-	if (taglen) {
+	if (tagged && taglen) {
 		conn->taglen = 0;
 		sz = fwrite(conn->tag, 1, taglen, conn->fout);
 		if (sz != taglen)
@@ -256,9 +256,9 @@ do_respond(CONN *conn)
 }
 
 static CONN_STATUS
-conn_respond(CONN *conn)
+conn_respond(CONN *conn, int tagged)
 {
-	CONN_STATUS ret = do_respond(conn);
+	CONN_STATUS ret = do_respond(conn, tagged);
 	fflush(conn->fout);
 	return ret;
 }
@@ -333,7 +333,7 @@ run_session(FILE *fin, FILE *fout)
 		return session_error;
 
 	do {
-		status = conn_respond(conn);
+		status = conn_respond(conn, 1);
 		if (status == conn_fatal)
 			break;
 
