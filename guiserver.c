@@ -31,6 +31,7 @@ typedef enum conn_status {
 	conn_bad,		/* Malformed command */
 	conn_no,		/* NO response */
 	conn_bye,		/* Connection terminating */
+	conn_dump,		/* DUMP response */
 	conn_eof,		/* End of stream */
 
 	conn_fatal = -1		/* Fatal error */
@@ -237,6 +238,7 @@ do_respond(CONN *conn, int tagged)
 	case conn_bad:	cond = "BAD"; break;
 	case conn_no:	cond = "NO";  break;
 	case conn_bye:	cond = "BYE"; break;
+	case conn_dump:	cond = "DUMP"; break;
 	default:	cond = "ERR"; break;
 	}
 	sz = fwrite(cond, 1, strlen(cond), conn->fout);
