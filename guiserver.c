@@ -351,6 +351,14 @@ disconnect(CONN *conn, const char *reason)
 }
 
 static CONN_STATUS
+too_many_args(CONN *conn)
+{
+	static const char msg[] = "Too many arguments";
+	copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
+	return conn_bad;
+}
+
+static CONN_STATUS
 do_DISCONNECT(CONN *conn)
 {
 	return disconnect(conn, "connection closing");
@@ -426,6 +434,13 @@ do_READMEM(CONN *conn)
 			return conn_bad;
 		}
 	}
+	if (p != endp)
+		++p;
+
+	while (p != endp && *p == ' ')
+		++p;
+	if (p != endp)
+		return too_many_args(conn);
 
 	char *buffer = malloc(bytecnt);
 	if (!buffer) {
