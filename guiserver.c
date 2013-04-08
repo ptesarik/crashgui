@@ -46,6 +46,7 @@ typedef struct conn {
 	FILE *fin, *fout;
 
 	enum conn_status status;
+	const struct proto_command *lastcmd;
 
 	/* current input line */
 	char *line;
@@ -249,6 +250,19 @@ do_respond(CONN *conn, int tagged)
 		sz = fwrite(conn->resp, 1, resplen, conn->fout);
 		if (sz != resplen)
 			return conn_fatal;
+	} else if (conn->status == conn_ok && conn->lastcmd) {
+		if (putc(' ', conn->fout) < 0)
+			return conn_fatal;
+
+		size_t len = strlen(conn->lastcmd->name);
+		sz = fwrite(conn->lastcmd->name, 1, len, conn->fout);
+		if (sz != len)
+			return conn_fatal;
+
+		static const char msg[] = " completed";
+		sz = fwrite(msg, 1, sizeof(msg) - 1, conn->fout);
+		if (sz != sizeof(msg) - 1)
+			return conn_fatal;
 	}
 
 	if (fwrite(crlf, 1, sizeof(crlf), conn->fout) != sizeof(crlf))
@@ -276,10 +290,13 @@ run_command(CONN *conn)
 	}
 	len = p - conn->cmd;
 
+	conn->lastcmd = NULL;
 	const struct proto_command *cp = cmds;
 	while (cp->len) {
-		if (cp->len == len && !memcmp(cp->name, conn->cmd, len))
+		if (cp->len == len && !memcmp(cp->name, conn->cmd, len)) {
+			conn->lastcmd = cp;
 			return conn->status = cp->handler(conn);
+		}
 		++cp;
 	}
 
