@@ -361,12 +361,18 @@ too_many_args(CONN *conn)
 static CONN_STATUS
 do_DISCONNECT(CONN *conn)
 {
+	if (conn->cmdlen > conn->lastcmd->len)
+		return too_many_args(conn);
+
 	return disconnect(conn, "connection closing");
 }
 
 static CONN_STATUS
 do_TERMINATE(CONN *conn)
 {
+	if (conn->cmdlen > conn->lastcmd->len)
+		return too_many_args(conn);
+
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
 	if (status == conn_ok)
 		conn->terminate = 1;
