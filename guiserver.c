@@ -60,9 +60,8 @@ typedef struct conn {
 	size_t taglen;
 
 	/* current command */
-	char *cmd;
+	char *cmd, *cmdend;
 	size_t cmdalloc;
-	size_t cmdlen;
 	char *cmdp;		/* current pointer */
 
 	/* current response */
@@ -206,7 +205,7 @@ do_getcommand(CONN * conn)
 
 	if (!copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p))
 		return conn_fatal;
-	conn->cmdlen = endp - p;
+	conn->cmdend = conn->cmd + (endp - p);
 	conn->cmdp = conn->cmd;
 
 	return 0;
@@ -289,8 +288,7 @@ conn_respond(CONN *conn, int tagged)
 static CONN_STATUS
 read_space(CONN *conn)
 {
-	char *endp = conn->cmd + conn->cmdlen;
-	if (conn->cmdp == endp || *conn->cmdp != ' ')
+	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ')
 		return conn_bad;
 	++conn->cmdp;
 	return conn_ok;
@@ -299,8 +297,8 @@ read_space(CONN *conn)
 static CONN_STATUS
 read_atom(CONN *conn, char **atom, size_t *atomlen)
 {
-	char *p = conn->cmdp, *endp = conn->cmd + conn->cmdlen;
-	while (p != endp && *p != ' ')
+	char *p = conn->cmdp;
+	while (p != conn->cmdend && *p != ' ')
 		++p;
 
 	*atom = conn->cmdp;
@@ -384,8 +382,7 @@ too_many_args(CONN *conn)
 static CONN_STATUS
 do_DISCONNECT(CONN *conn)
 {
-	char *endp = conn->cmd + conn->cmdlen;
-	if (conn->cmdp < endp)
+	if (conn->cmdp < conn->cmdend)
 		return too_many_args(conn);
 
 	return disconnect(conn, "connection closing");
@@ -394,8 +391,7 @@ do_DISCONNECT(CONN *conn)
 static CONN_STATUS
 do_TERMINATE(CONN *conn)
 {
-	char *endp = conn->cmd + conn->cmdlen;
-	if (conn->cmdp < endp)
+	if (conn->cmdp < conn->cmdend)
 		return too_many_args(conn);
 
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
@@ -407,7 +403,6 @@ do_TERMINATE(CONN *conn)
 static CONN_STATUS
 do_READMEM(CONN *conn)
 {
-	char *endp = conn->cmd + conn->cmdlen;
 	char *tok, *endnum;
 	size_t len;
 	CONN_STATUS status;
@@ -462,7 +457,7 @@ do_READMEM(CONN *conn)
 		}
 	}
 
-	if (conn->cmdp != endp)
+	if (conn->cmdp != conn->cmdend)
 		return too_many_args(conn);
 
 	char *buffer = malloc(bytecnt);
