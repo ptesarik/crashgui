@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MemViewChooser</class>
+ <widget class="QDialog" name="MemViewChooser">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>333</width>
+    <height>300</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Choose Memory View</string>
+  </property>
+  <property name="modal">
+   <bool>true</bool>
+  </property>
+  <widget class="QDialogButtonBox" name="buttonBox">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>240</y>
+     <width>273</width>
+     <height>32</height>
+    </rect>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+   <property name="standardButtons">
+    <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+   </property>
+  </widget>
+  <widget class="QLabel" name="label">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>34</y>
+     <width>76</width>
+     <height>14</height>
+    </rect>
+   </property>
+   <property name="minimumSize">
+    <size>
+     <width>52</width>
+     <height>0</height>
+    </size>
+   </property>
+   <property name="text">
+    <string>Start Address:</string>
+   </property>
+  </widget>
+  <widget class="QLineEdit" name="startAddr">
+   <property name="geometry">
+    <rect>
+     <x>110</x>
+     <y>30</y>
+     <width>193</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="inputMethodHints">
+    <set>Qt::ImhPreferNumbers</set>
+   </property>
+  </widget>
+  <widget class="QGroupBox" name="sizeGroup">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>84</y>
+     <width>116</width>
+     <height>156</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string>Element Size</string>
+   </property>
+   <widget class="QRadioButton" name="byteButton">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>30</y>
+      <width>49</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>8-bit</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="wordButton">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>55</y>
+      <width>56</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>16-bit</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="dwordButton">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>80</y>
+      <width>56</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>32-bit</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="qwordButton">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>105</y>
+      <width>56</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>64-bit</string>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QCheckBox" name="cbText">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>59</y>
+     <width>119</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Text (char) format</string>
+   </property>
+  </widget>
+  <widget class="QGroupBox" name="endianGroup">
+   <property name="geometry">
+    <rect>
+     <x>150</x>
+     <y>84</y>
+     <width>153</width>
+     <height>156</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string/>
+   </property>
+   <widget class="QRadioButton" name="littleEndian">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>30</y>
+      <width>93</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Little-endian</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="bigEndian">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>55</y>
+      <width>85</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Big-endian</string>
+    </property>
+   </widget>
+  </widget>
+ </widget>
+ <tabstops>
+  <tabstop>startAddr</tabstop>
+  <tabstop>cbText</tabstop>
+  <tabstop>byteButton</tabstop>
+  <tabstop>wordButton</tabstop>
+  <tabstop>dwordButton</tabstop>
+  <tabstop>qwordButton</tabstop>
+  <tabstop>littleEndian</tabstop>
+  <tabstop>bigEndian</tabstop>
+  <tabstop>buttonBox</tabstop>
+ </tabstops>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>accepted()</signal>
+   <receiver>MemViewChooser</receiver>
+   <slot>accept()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>248</x>
+     <y>254</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>157</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>rejected()</signal>
+   <receiver>MemViewChooser</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>316</x>
+     <y>260</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>286</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>
