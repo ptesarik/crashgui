@@ -44,8 +44,8 @@ typedef enum session_status {
 } SESSION_STATUS;
 
 typedef struct conn {
-	/* input and output streams */
-	FILE *fin, *fout;
+	/* socket stream */
+	FILE *f;
 
 	enum conn_status status;
 	const struct proto_command *lastcmd;
@@ -126,12 +126,11 @@ copy_string(char **pdst, size_t *pdstalloc,
 }
 
 static CONN *
-conn_init(FILE *fin, FILE *fout)
+conn_init(FILE *f)
 {
 	CONN *ret = calloc(1, sizeof(struct conn));
 	if (ret) {
-		ret->fin = fin;
-		ret->fout = fout;
+		ret->f = f;
 
 		/* Prepare the greeting message */
 		int n;
@@ -151,10 +150,8 @@ conn_init(FILE *fin, FILE *fout)
 static void
 conn_done(CONN *conn)
 {
-	if (conn->fin)
-		fclose(conn->fin);
-	if (conn->fout)
-		fclose(conn->fout);
+	if (conn->f)
+		fclose(conn->f);
 	if (conn->line)
 		free(conn->line);
 	if (conn->tag)
@@ -169,12 +166,9 @@ conn_done(CONN *conn)
 static CONN_STATUS
 do_getcommand(CONN * conn)
 {
-	if (!conn->fin)
-		return conn_eof;
-
-	ssize_t length = getline(&conn->line, &conn->linealloc, conn->fin);
+	ssize_t length = getline(&conn->line, &conn->linealloc, conn->f);
 	if (length <= 0)
-		return ferror(conn->fin) ? conn_fatal : conn_eof;
+		return ferror(conn->f) ? conn_fatal : conn_eof;
 
 	/* Every line must be terminated by a LF. */
 	if (conn->line[--length] != '\n')
@@ -219,19 +213,16 @@ do_respond(CONN *conn, int tagged)
 {
 	size_t sz;
 
-	if (!conn->fout)
-		return conn_fatal;
-
 	size_t taglen = conn->taglen;
 	if (tagged && taglen) {
 		conn->taglen = 0;
-		sz = fwrite(conn->tag, 1, taglen, conn->fout);
+		sz = fwrite(conn->tag, 1, taglen, conn->f);
 		if (sz != taglen)
 			return conn_fatal;
-	} else if (putc('*', conn->fout) < 0)
+	} else if (putc('*', conn->f) < 0)
 		return conn_fatal;
 
-	if (putc(' ', conn->fout) < 0)
+	if (putc(' ', conn->f) < 0)
 		return conn_fatal;
 
 	const char *cond;
@@ -243,35 +234,35 @@ do_respond(CONN *conn, int tagged)
 	case conn_bad:
 	default:	cond = "BAD"; break;
 	}
-	sz = fwrite(cond, 1, strlen(cond), conn->fout);
+	sz = fwrite(cond, 1, strlen(cond), conn->f);
 	if (sz != strlen(cond))
 		return conn_fatal;
 
 	size_t resplen = conn->resplen;
 	if (resplen) {
 		conn->resplen = 0;
-		if (putc(' ', conn->fout) < 0)
+		if (putc(' ', conn->f) < 0)
 			return conn_fatal;
 
-		sz = fwrite(conn->resp, 1, resplen, conn->fout);
+		sz = fwrite(conn->resp, 1, resplen, conn->f);
 		if (sz != resplen)
 			return conn_fatal;
 	} else if (conn->status == conn_ok && conn->lastcmd) {
-		if (putc(' ', conn->fout) < 0)
+		if (putc(' ', conn->f) < 0)
 			return conn_fatal;
 
 		size_t len = strlen(conn->lastcmd->name);
-		sz = fwrite(conn->lastcmd->name, 1, len, conn->fout);
+		sz = fwrite(conn->lastcmd->name, 1, len, conn->f);
 		if (sz != len)
 			return conn_fatal;
 
 		static const char msg[] = " completed";
-		sz = fwrite(msg, 1, sizeof(msg) - 1, conn->fout);
+		sz = fwrite(msg, 1, sizeof(msg) - 1, conn->f);
 		if (sz != sizeof(msg) - 1)
 			return conn_fatal;
 	}
 
-	if (fwrite(crlf, 1, sizeof(crlf), conn->fout) != sizeof(crlf))
+	if (fwrite(crlf, 1, sizeof(crlf), conn->f) != sizeof(crlf))
 		return conn_fatal;
 
 	return conn_ok;
@@ -281,7 +272,7 @@ static CONN_STATUS
 conn_respond(CONN *conn, int tagged)
 {
 	CONN_STATUS ret = do_respond(conn, tagged);
-	fflush(conn->fout);
+	fflush(conn->f);
 	return ret;
 }
 
@@ -330,7 +321,7 @@ send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 	snprintf(num, sizeof num, "{%lu}", (unsigned long) length);
 	status = send_untagged(conn, status, num);
 	if (status == conn_ok) {
-		size_t sz = fwrite(buffer, 1, length, conn->fout);
+		size_t sz = fwrite(buffer, 1, length, conn->f);
 		if (sz != length)
 			status = conn_fatal;
 	}
@@ -340,13 +331,12 @@ send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
-	if (fclose(conn->fin)) {
+	if (shutdown(fileno(conn->f), SHUT_RD)) {
 		char *err = strerror(errno);
 		copy_string(&conn->resp, &conn->resplen, err, strlen(err));
 		return conn_fatal;
 	}
 
-	conn->fin = NULL;
 	return send_untagged(conn, conn_bye, reason);
 }
 
@@ -467,13 +457,13 @@ do_READMEM(CONN *conn)
 }
 
 static SESSION_STATUS
-run_session(FILE *fin, FILE *fout)
+run_session(FILE *f)
 {
 	CONN *conn;
 	CONN_STATUS status;
 	int terminate = 0;
 
-	if (! (conn = conn_init(fin, fout)) )
+	if (! (conn = conn_init(f)) )
 		return session_error;
 
 	do {
@@ -501,7 +491,7 @@ run_server(const char *path)
 {
 	size_t sz = offsetof(struct sockaddr_un, sun_path) + strlen(path) + 1;
 	struct sockaddr_un *sun;
-	int fd, fdin;
+	int fd, sessfd;
 	int ret = -1;
 	int i;
 
@@ -535,30 +525,16 @@ run_server(const char *path)
 		goto err_unlink;
 	}
 
-	while ( (fdin = accept(fd, NULL, NULL)) >= 0) {
-		int fdout;
-		FILE *fin, *fout;
+	while ( (sessfd = accept(fd, NULL, NULL)) >= 0) {
+		FILE *f;
 
-		if ( (fdout = dup(fdin)) < 0) {
-			report_error("Cannot duplicate FD");
-			close(fdin);
-			continue;
-		}
-		if (! (fin = fdopen(fdin, "r")) ) {
+		if (! (f = fdopen(sessfd, "r+")) ) {
 			report_error("Cannot create input stream");
-			close(fdout);
-			close(fdin);
-			continue;
-		}
-		if (! (fout = fdopen(fdout, "w")) ) {
-			report_error("Cannot create output stream");
-			fclose(fin);
-			close(fdout);
-			close(fdin);
+			close(sessfd);
 			continue;
 		}
 
-		SESSION_STATUS status = run_session(fin, fout);
+		SESSION_STATUS status = run_session(f);
 		if (status == session_terminate) {
 			ret = 0;
 			break;
