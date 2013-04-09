@@ -339,10 +339,23 @@ run_command(CONN *conn)
 }
 
 static CONN_STATUS
-send_untagged(CONN *conn, CONN_STATUS status, const char *msg)
+send_untagged(CONN *conn, CONN_STATUS status, const char *fmt, ...)
 {
+	va_list ap;
+	va_start(ap, fmt);
+	int n = vsnprintf(NULL, 0, fmt, ap);
+	va_end(ap);
+
+	char *msg = malloc(n + 1);
+	if (!msg)
+		return set_response(conn, conn_fatal, strerror(errno));
+	va_start(ap, fmt);
+	vsnprintf(msg, n + 1, fmt, ap);
+	va_end(ap);
+
 	CONN_STATUS oldstatus = conn->status;
 	set_response(conn, status, msg);
+	free(msg);
 	status = conn_respond(conn, 0);
 	conn->status = (status == conn_fatal) ? status : oldstatus;
 	return status;
@@ -351,10 +364,7 @@ send_untagged(CONN *conn, CONN_STATUS status, const char *msg)
 static CONN_STATUS
 send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 {
-	char num[2 + 20 + 1];	/* enough to hold any 64-bit value */
-
-	snprintf(num, sizeof num, "{%lu}", (unsigned long) length);
-	status = send_untagged(conn, status, num);
+	status = send_untagged(conn, status, "{%lu}", (unsigned long) length);
 	if (status == conn_ok) {
 		size_t sz = fwrite(buffer, 1, length, conn->f);
 		if (sz != length)
@@ -369,7 +379,7 @@ disconnect(CONN *conn, const char *reason)
 	if (shutdown(fileno(conn->f), SHUT_RD))
 		return set_response(conn, conn_fatal, strerror(errno));
 
-	return send_untagged(conn, conn_bye, reason);
+	return send_untagged(conn, conn_bye, "%s", reason);
 }
 
 static CONN_STATUS
