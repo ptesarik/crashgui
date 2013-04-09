@@ -89,6 +89,24 @@ Commands
                S: <52 (that is 0x34) bytes of binary dump>
                S: A026 OK DUMP completed
 
+* SYMBOL command
+
+   Arguments:  kernel virtual address
+
+   Responses:  REQUIRED untagged responses: SYMBOL
+
+   Result:     OK - address translated to a symbol
+               NO - no symbols could be found for the address
+               BAD - command unknown or arguments invalid
+
+      The SYMBOL command translates a kernel virtual address to a symbol.
+      The argument is interpreted as a hexadecimal kernel virtual address.
+      Addresses in the response are also hexadecimal.
+
+   Example:    C: A027 SYMBOL c07070a0
+               S: * SYMBOL c07070a0 R "linux_banner"
+               S: A027 OK SYMBOL completed
+
 Authentication
 --------------
 There is no authentication. The crashgui protocol is designed to operate
