@@ -63,6 +63,7 @@ typedef struct conn {
 	char *cmd;
 	size_t cmdalloc;
 	size_t cmdlen;
+	char *cmdp;		/* current pointer */
 
 	/* current response */
 	char *resp;
@@ -122,6 +123,15 @@ copy_string(char **pdst, size_t *pdstalloc,
 	}
 	memcpy(dst, src, srclen);
 	return dst;
+}
+
+static void
+toupper_string(char *str, size_t len)
+{
+	while (len--) {
+		*str = toupper(*str);
+		++str;
+	}
 }
 
 static CONN *
@@ -190,12 +200,14 @@ do_getcommand(CONN * conn)
 	if (!conn->taglen || p == endp)
 		return conn_bad;
 
-	while (*p == ' ')
-		++p;
+	if (p == endp || *p != ' ')
+		return conn_bad;
+	++p;
 
 	if (!copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p))
 		return conn_fatal;
 	conn->cmdlen = endp - p;
+	conn->cmdp = conn->cmd;
 
 	return 0;
 }
@@ -275,20 +287,43 @@ conn_respond(CONN *conn, int tagged)
 }
 
 static CONN_STATUS
+read_space(CONN *conn)
+{
+	char *endp = conn->cmd + conn->cmdlen;
+	if (conn->cmdp == endp || *conn->cmdp != ' ')
+		return conn_bad;
+	++conn->cmdp;
+	return conn_ok;
+}
+
+static CONN_STATUS
+read_atom(CONN *conn, char **atom, size_t *atomlen)
+{
+	char *p = conn->cmdp, *endp = conn->cmd + conn->cmdlen;
+	while (p != endp && *p != ' ')
+		++p;
+
+	*atom = conn->cmdp;
+	*atomlen = p - conn->cmdp;
+	conn->cmdp = p;
+	return *atomlen ? conn_ok : conn_bad;
+}
+
+static CONN_STATUS
 run_command(CONN *conn)
 {
-	char *p = conn->cmd, *endp = p + conn->cmdlen;
+	char *cmd;
 	size_t len;
-	while (p != endp && *p != ' ') {
-		*p = toupper(*p);
-		++p;
-	}
-	len = p - conn->cmd;
+	CONN_STATUS status;
+
+	if ( (status = read_atom(conn, &cmd, &len)) != conn_ok)
+		return conn->status = status;
+	toupper_string(cmd, len);
 
 	conn->lastcmd = NULL;
 	const struct proto_command *cp = cmds;
 	while (cp->len) {
-		if (cp->len == len && !memcmp(cp->name, conn->cmd, len)) {
+		if (cp->len == len && !memcmp(cp->name, cmd, len)) {
 			conn->lastcmd = cp;
 			return conn->status = cp->handler(conn);
 		}
@@ -349,7 +384,8 @@ too_many_args(CONN *conn)
 static CONN_STATUS
 do_DISCONNECT(CONN *conn)
 {
-	if (conn->cmdlen > conn->lastcmd->len)
+	char *endp = conn->cmd + conn->cmdlen;
+	if (conn->cmdp < endp)
 		return too_many_args(conn);
 
 	return disconnect(conn, "connection closing");
@@ -358,7 +394,8 @@ do_DISCONNECT(CONN *conn)
 static CONN_STATUS
 do_TERMINATE(CONN *conn)
 {
-	if (conn->cmdlen > conn->lastcmd->len)
+	char *endp = conn->cmd + conn->cmdlen;
+	if (conn->cmdp < endp)
 		return too_many_args(conn);
 
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
@@ -370,44 +407,42 @@ do_TERMINATE(CONN *conn)
 static CONN_STATUS
 do_READMEM(CONN *conn)
 {
-	char *p = conn->cmd + conn->lastcmd->len;
 	char *endp = conn->cmd + conn->cmdlen;
 	char *tok, *endnum;
+	size_t len;
 	CONN_STATUS status;
 
 	/* Get starting address */
-	while (p != endp && *p == ' ')
-		++p;
-	for (tok = p; p != endp && *p != ' '; ++p);
+	if ( (status = read_space(conn)) != conn_ok)
+		return status;
+	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
+		return status;
 	unsigned long addr = strtoul(tok, &endnum, 16);
-	if (endnum != p || p == tok) {
+	if (endnum != conn->cmdp) {
 		static const char msg[] = "Invalid start address";
 		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
 		return conn_bad;
 	}
-	if (p != endp)
-		++p;
 
 	/* Get byte count */
-	while (p != endp && *p == ' ')
-		++p;
-	for (tok = p; p != endp && *p != ' '; ++p);
+	if ( (status = read_space(conn)) != conn_ok)
+		return status;
+	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
+		return status;
 	unsigned long bytecnt = strtoul(tok, &endnum, 16);
-	if (endnum != p || p == tok) {
+	if (endnum != conn->cmdp) {
 		static const char msg[] = "Invalid byte count";
 		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
 		return conn_bad;
 	}
-	if (p != endp)
-		++p;
 
 	/* Get (optional) memory type */
-	while (p != endp && *p == ' ')
-		++p;
-	for (tok = p; p != endp && *p != ' '; ++p)
-		*p = toupper(*p);
+	if ( (status = read_space(conn)) != conn_ok)
+		return status;
+	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
+		return status;
+	toupper_string(tok, len);
 	int memtype = KVADDR;
-	size_t len = p - tok;
 	if (len) {
 		if (len == 6 && !memcmp(tok, "KVADDR", 6))
 			memtype = KVADDR;
@@ -426,12 +461,8 @@ do_READMEM(CONN *conn)
 			return conn_bad;
 		}
 	}
-	if (p != endp)
-		++p;
 
-	while (p != endp && *p == ' ')
-		++p;
-	if (p != endp)
+	if (conn->cmdp != endp)
 		return too_many_args(conn);
 
 	char *buffer = malloc(bytecnt);
