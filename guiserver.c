@@ -286,6 +286,13 @@ conn_respond(CONN *conn, int tagged)
 }
 
 static CONN_STATUS
+set_response(CONN *conn, CONN_STATUS status, const char *msg)
+{
+	copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
+	return conn->status = status;
+}
+
+static CONN_STATUS
 read_space(CONN *conn)
 {
 	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ')
@@ -328,17 +335,14 @@ run_command(CONN *conn)
 		++cp;
 	}
 
-	static const char msg[] = "Unknown protocol command.";
-	copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-	return conn->status = conn_bad;
+	return set_response(conn, conn_bad, "Unknown protocol command.");
 }
 
 static CONN_STATUS
 send_untagged(CONN *conn, CONN_STATUS status, const char *msg)
 {
 	CONN_STATUS oldstatus = conn->status;
-	conn->status = status;
-	copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
+	set_response(conn, status, msg);
 	status = conn_respond(conn, 0);
 	conn->status = (status == conn_fatal) ? status : oldstatus;
 	return status;
@@ -362,11 +366,8 @@ send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
-	if (shutdown(fileno(conn->f), SHUT_RD)) {
-		char *err = strerror(errno);
-		copy_string(&conn->resp, &conn->resplen, err, strlen(err));
-		return conn_fatal;
-	}
+	if (shutdown(fileno(conn->f), SHUT_RD))
+		return set_response(conn, conn_fatal, strerror(errno));
 
 	return send_untagged(conn, conn_bye, reason);
 }
@@ -374,9 +375,12 @@ disconnect(CONN *conn, const char *reason)
 static CONN_STATUS
 too_many_args(CONN *conn)
 {
-	static const char msg[] = "Too many arguments";
-	copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-	return conn_bad;
+	char *p = conn->cmdp;
+	while (p != conn->cmdend && *p == ' ')
+		++p;
+	return set_response(conn, conn_bad, (p != conn->cmdend
+					     ? "Too many arguments"
+					     : "Trailing space"));
 }
 
 static CONN_STATUS
@@ -413,11 +417,8 @@ do_READMEM(CONN *conn)
 	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
 		return status;
 	unsigned long addr = strtoul(tok, &endnum, 16);
-	if (endnum != conn->cmdp) {
-		static const char msg[] = "Invalid start address";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-		return conn_bad;
-	}
+	if (endnum != conn->cmdp)
+		return set_response(conn, conn_bad, "Invalid start address");
 
 	/* Get byte count */
 	if ( (status = read_space(conn)) != conn_ok)
@@ -425,11 +426,8 @@ do_READMEM(CONN *conn)
 	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
 		return status;
 	unsigned long bytecnt = strtoul(tok, &endnum, 16);
-	if (endnum != conn->cmdp) {
-		static const char msg[] = "Invalid byte count";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-		return conn_bad;
-	}
+	if (endnum != conn->cmdp)
+		return set_response(conn, conn_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
 	if ( (status = read_space(conn)) != conn_ok)
@@ -449,30 +447,22 @@ do_READMEM(CONN *conn)
 			memtype = XENMACHADDR;
 		else if (len == 8 && !memcmp(tok, "FILEADDR", 8))
 			memtype = FILEADDR;
-		else {
-			static const char msg[] = "Invalid memory type";
-			copy_string(&conn->resp, &conn->resplen,
-				    msg, sizeof(msg)-1);
-			return conn_bad;
-		}
+		else
+			return set_response(conn, conn_bad,
+					    "Invalid memory type");
 	}
 
 	if (conn->cmdp != conn->cmdend)
 		return too_many_args(conn);
 
 	char *buffer = malloc(bytecnt);
-	if (!buffer) {
-		static const char msg[] = "Buffer allocation failure";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-		return conn_bad;
-	}
+	if (!buffer)
+		return set_response(conn, conn_bad,
+				    "Buffer allocation failure");
 
 	if (!readmem(addr, memtype, buffer, bytecnt,
-		     "crashgui", RETURN_ON_ERROR)) {
-		static const char msg[] = "Read error";
-		copy_string(&conn->resp, &conn->resplen, msg, sizeof(msg)-1);
-		return conn_no;
-	}
+		     "crashgui", RETURN_ON_ERROR))
+		return set_response(conn, conn_no, "Read error");
 
 	status = send_literal(conn, conn_dump, buffer, bytecnt);
 
