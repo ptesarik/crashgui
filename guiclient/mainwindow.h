@@ -9,7 +9,17 @@
 #include <QtGui/QStatusBar>
 #include <QMdiArea>
 #include <QProcessEnvironment>
+#include <QByteArray>
 
+
+typedef enum mem_type
+{
+    KVADDR,
+    UVADDR,
+    PHYSADDR,
+    XENMACHADDR,
+    FILEADDR
+}MEM_TYPE;
 
 class MainWindow : public QMainWindow
 {
@@ -19,16 +29,27 @@ public:
     MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
+    QByteArray readMemory(const QString &addr, unsigned int length, MEM_TYPE mt = KVADDR);
+
 protected:
     int server;
+    FILE *f;
     QString currentFilename;
+
+    size_t linealloc;
+    char *line;
 
     void retranslateUI();
     void setupUI();
     
     bool openServer(QString path);
     bool closeServer();
-    QString sendCommand(QString cmd, QString Args);
+
+    QString sendCommand(const QString &cmd, const QString &Args);
+    QString getReply();
+    int getRaw(unsigned char **buf, int length);
+
+    QString readAtom(QString &cmd);
 
 private slots:
     void on_fileOpen();

@@ -2,11 +2,17 @@
 
 QMemView::QMemView(QWidget *parent) :
     QLabel(parent),
+    mainWindow(NULL),
     addr(0),
     fileName("")
 {
     setBackgroundRole(QPalette::Base);
-    setText("Howdy!");
+
+    // Switch to a fixed-pitch font
+    QFont fnt = font();
+    fnt.setFamily("Courier");
+    fnt.setFixedPitch(true);
+    setFont(fnt);
 }
 
 void QMemView::setAddr(unsigned long long newAddr, bool refresh)
