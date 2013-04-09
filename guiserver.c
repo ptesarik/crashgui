@@ -53,7 +53,6 @@ typedef struct conn {
 	/* current input line */
 	char *line;
 	size_t linealloc;
-	size_t linelen;
 
 	/* current tag */
 	char *tag;
@@ -178,7 +177,6 @@ do_getcommand(CONN * conn)
 	 */
 	if (length > 0 && conn->line[length-1] == '\r')
 		conn->line[--length] = 0;
-	conn->linelen = length;
 
 	conn->taglen = 0;
 	char *p = conn->line, *endp = p + length;
