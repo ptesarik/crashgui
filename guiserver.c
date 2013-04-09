@@ -32,6 +32,7 @@ typedef enum conn_status {
 	conn_no,		/* NO response */
 	conn_bye,		/* Connection terminating */
 	conn_dump,		/* DUMP response */
+	conn_symbol,		/* SYMBOL response */
 
 	conn_eof,		/* End of stream */
 	conn_fatal = -1		/* Fatal error */
@@ -82,6 +83,7 @@ struct proto_command {
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
+static CONN_STATUS do_SYMBOL(CONN *conn);
 
 #define DEFINE_CMD(name)	{ (sizeof(#name) - 1), (#name), (do_ ## name) }
 
@@ -89,6 +91,7 @@ static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
 	DEFINE_CMD(READMEM),
+	DEFINE_CMD(SYMBOL),
 	{ 0, NULL }
 };
 
@@ -240,6 +243,7 @@ do_respond(CONN *conn, int tagged)
 	case conn_no:	cond = "NO";  break;
 	case conn_bye:	cond = "BYE"; break;
 	case conn_dump:	cond = "DUMP"; break;
+	case conn_symbol: cond = "SYMBOL"; break;
 	case conn_bad:
 	default:	cond = "BAD"; break;
 	}
@@ -478,6 +482,34 @@ do_READMEM(CONN *conn)
 
 	free(buffer);
 	return status;
+}
+
+static CONN_STATUS
+do_SYMBOL(CONN *conn)
+{
+	CONN_STATUS status;
+	char *tok, *endnum;
+	size_t len;
+
+	/* Get the address */
+	if ( (status = read_space(conn)) != conn_ok)
+		return status;
+	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
+		return status;
+	unsigned long addr = strtoul(tok, &endnum, 16);
+	if (endnum != conn->cmdp)
+		return set_response(conn, conn_bad, "Invalid address");
+
+	if (conn->cmdp != conn->cmdend)
+		return too_many_args(conn);
+
+	ulong offset;
+	struct syment *sp = value_search(addr, &offset);
+	if (!sp)
+		return set_response(conn, conn_no, "No symbol found");
+
+	return send_untagged(conn, conn_symbol, "%lx %c \"%s\"",
+			     sp->value, sp->type, sp->name);
 }
 
 static SESSION_STATUS
