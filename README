@@ -89,7 +89,7 @@ Commands
                S: <52 (that is 0x34) bytes of binary dump>
                S: A026 OK DUMP completed
 
-* ADDRESS command
+* SYMBOL command
 
    Arguments:  symbol name
 
@@ -99,14 +99,14 @@ Commands
                NO - no symbols with the given name could be found
                BAD - command unknown or arguments invalid
 
-      The ADDRESS command looks up a symbol's kernel virtual address.
+      The SYMBOL command looks up a symbol's kernel virtual address.
       All numbers in the response are hexadecimal.
 
-   Example:    C: A007 ADDRESS "linux_banner"
+   Example:    C: A007 SYMBOL "linux_banner"
                S: * SYMBOL c07070a0 c0 R "linux_banner"
-               S: A007 OK ADDRESS completed
+               S: A007 OK SYMBOL completed
 
-* SYMBOL command
+* ADDRESS command
 
    Arguments:  kernel virtual address
 
@@ -116,13 +116,13 @@ Commands
                NO - no symbols could be found for the address
                BAD - command unknown or arguments invalid
 
-      The SYMBOL command translates a kernel virtual address to a symbol.
+      The ADDRESS command translates a kernel virtual address to a symbol.
       The argument is interpreted as a hexadecimal kernel virtual address.
       All numbers in the response are hexadecimal.
 
-   Example:    C: A027 SYMBOL c07070a0
+   Example:    C: A027 ADDRESS c07070a0
                S: * SYMBOL c07070a0 c0 R "linux_banner"
-               S: A027 OK SYMBOL completed
+               S: A027 OK ADDRESS completed
 
 Authentication
 --------------

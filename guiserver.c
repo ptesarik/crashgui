@@ -87,8 +87,8 @@ struct proto_command {
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
-static CONN_STATUS do_ADDRESS(CONN *conn);
 static CONN_STATUS do_SYMBOL(CONN *conn);
+static CONN_STATUS do_ADDRESS(CONN *conn);
 
 #define DEFINE_CMD(name)	{ (sizeof(#name) - 1), (#name), (do_ ## name) }
 
@@ -96,8 +96,8 @@ static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
 	DEFINE_CMD(READMEM),
-	DEFINE_CMD(ADDRESS),
 	DEFINE_CMD(SYMBOL),
+	DEFINE_CMD(ADDRESS),
 	{ 0, NULL }
 };
 
@@ -651,7 +651,7 @@ do_READMEM(CONN *conn)
 }
 
 static CONN_STATUS
-do_ADDRESS(CONN *conn)
+do_SYMBOL(CONN *conn)
 {
 	CONN_STATUS status;
 	char *tok;
@@ -678,7 +678,7 @@ do_ADDRESS(CONN *conn)
 }
 
 static CONN_STATUS
-do_SYMBOL(CONN *conn)
+do_ADDRESS(CONN *conn)
 {
 	CONN_STATUS status;
 	char *tok, *endnum;
