@@ -305,6 +305,7 @@ conn_respond(CONN *conn, int tagged)
 			       ? msg_completed
 			       : msg_failed));
 	}
+	conn->lastcmd = NULL;
 
 	memcpy(p, crlf, sizeof crlf);
 	p += sizeof crlf;
@@ -446,7 +447,6 @@ run_command(CONN *conn)
 		return conn->status = status;
 	toupper_string(cmd, len);
 
-	conn->lastcmd = NULL;
 	const struct proto_command *cp = cmds;
 	while (cp->len) {
 		if (cp->len == len && !memcmp(cp->name, cmd, len)) {
