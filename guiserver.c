@@ -183,6 +183,20 @@ conn_done(CONN *conn)
 }
 
 static CONN_STATUS
+ensure_buffer(CONN *conn, size_t size)
+{
+	if (size <= conn->bufalloc)
+		return conn_ok;
+
+	char *newbuf = realloc(conn->buf, size);
+	if (!newbuf)
+		return conn_bad;
+	conn->buf = newbuf;
+	conn->bufalloc = size;
+	return conn_ok;
+}
+
+static CONN_STATUS
 do_getcommand(CONN * conn)
 {
 	ssize_t length = getline(&conn->line, &conn->linealloc, conn->f);
@@ -385,16 +399,11 @@ read_literal(CONN *conn, char **string, size_t *len)
 	++conn->cmdp;
 
 	/* Check for overflow */
-	if (size + 1 == 0)
+	if (size == (size_t)-1)
 		return set_response(conn, conn_bad, "Literal too big");
 
-	if (size >= conn->bufalloc) {
-		char *newbuf = realloc(conn->buf, size + 1);
-		if (!newbuf)
-			return set_response(conn, conn_bad, strerror(errno));
-		conn->buf = newbuf;
-		conn->bufalloc = size + 1;
-	}
+	if ( (status = ensure_buffer(conn, size + 1)) != conn_ok)
+		return set_response(conn, status, strerror(errno));
 
 	fputs("+ Ready for literal data\r\n", conn->f);
 	fflush(conn->f);
