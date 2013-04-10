@@ -30,11 +30,12 @@ CFLAGS=-g -Wall
 
 MODULES=guiserver.so
 GUISERVER_SRC=guiserver.c getline.c
+GUISERVER_HEADERS=getline.h
 
 all: $(MODULES)
 
 clean:
 	rm $(MODULES) $(OBJS)
 
-guiserver.so: $(GUISERVER_SRC)
-	$(CC) $(CFLAGS) -nostartfiles -shared -rdynamic -o $@ $+ -fPIC -D$(TARGET)
+guiserver.so: $(GUISERVER_SRC) $(GUISERVER_HEADERS)
+	$(CC) $(CFLAGS) -nostartfiles -shared -rdynamic -o $@ $(GUISERVER_SRC) -fPIC -D$(TARGET)
