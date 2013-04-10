@@ -70,6 +70,10 @@ typedef struct conn {
 	size_t respalloc;
 	size_t resplen;
 
+	/* buffer (e.g. for literals) */
+	char *buf;
+	size_t bufalloc;
+
 	/* terminating */
 	int terminate;
 } CONN;
@@ -83,6 +87,7 @@ struct proto_command {
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
+static CONN_STATUS do_ADDRESS(CONN *conn);
 static CONN_STATUS do_SYMBOL(CONN *conn);
 
 #define DEFINE_CMD(name)	{ (sizeof(#name) - 1), (#name), (do_ ## name) }
@@ -91,6 +96,7 @@ static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
 	DEFINE_CMD(READMEM),
+	DEFINE_CMD(ADDRESS),
 	DEFINE_CMD(SYMBOL),
 	{ 0, NULL }
 };
@@ -171,6 +177,8 @@ conn_done(CONN *conn)
 		free(conn->cmd);
 	if (conn->resp)
 		free(conn->resp);
+	if (conn->buf)
+		free(conn->buf);
 	free (conn);
 }
 
@@ -306,6 +314,19 @@ read_space(CONN *conn)
 }
 
 static CONN_STATUS
+read_number(CONN *conn, char **num, size_t *numlen)
+{
+	char *p = conn->cmdp;
+	while (p != conn->cmdend && isdigit(*p))
+		++p;
+
+	*num = conn->cmdp;
+	*numlen = p - conn->cmdp;
+	conn->cmdp = p;
+	return *numlen ? conn_ok : conn_bad;
+}
+
+static CONN_STATUS
 read_atom(CONN *conn, char **atom, size_t *atomlen)
 {
 	char *p = conn->cmdp;
@@ -316,6 +337,92 @@ read_atom(CONN *conn, char **atom, size_t *atomlen)
 	*atomlen = p - conn->cmdp;
 	conn->cmdp = p;
 	return *atomlen ? conn_ok : conn_bad;
+}
+
+static CONN_STATUS
+read_quoted(CONN *conn, char **string, size_t *len)
+{
+	char *p = conn->cmdp, *q;
+	if (p == conn->cmdend || *p != '\"')
+		return set_response(conn, conn_bad, "Quoted string expected");
+
+	*string = q = ++p;
+	while (p != conn->cmdend && *p != '\"') {
+		if (*p == '\\')
+			if (++p == conn->cmdend)
+				break;
+		*q++ = *p++;
+	}
+
+	if (p == conn->cmdend || *p != '\"')
+		return set_response(conn, conn_bad, "Invalid quoted string");
+	conn->cmdp = ++p;
+
+	*len = q - *string;
+	return conn_ok;
+}
+
+static CONN_STATUS
+read_literal(CONN *conn, char **string, size_t *len)
+{
+	CONN_STATUS status;
+
+	if (conn->cmdp == conn->cmdend || *conn->cmdp != '{')
+		return set_response(conn, conn_bad, "Literal expected");
+	++conn->cmdp;
+
+	/* Read the number of bytes */
+	char *num, *endnum;
+	size_t numlen;
+	if ((status = read_number(conn, &num, &numlen)) != conn_ok)
+		return status;
+	unsigned long size = strtoul(num, &endnum, 10);
+	if (endnum != conn->cmdp)
+		return set_response(conn, conn_bad, "Invalid literal");
+
+	if (conn->cmdp + 1 != conn->cmdend || *conn->cmdp != '}')
+		return set_response(conn, conn_bad, "Invalid literal");
+	++conn->cmdp;
+
+	/* Check for overflow */
+	if (size + 1 == 0)
+		return set_response(conn, conn_bad, "Literal too big");
+
+	if (size >= conn->bufalloc) {
+		char *newbuf = realloc(conn->buf, size + 1);
+		if (!newbuf)
+			return set_response(conn, conn_bad, strerror(errno));
+		conn->buf = newbuf;
+		conn->bufalloc = size + 1;
+	}
+
+	fputs("+ Ready for literal data\r\n", conn->f);
+	fflush(conn->f);
+
+	if (fread(conn->buf, 1, size, conn->f) != size) {
+		const char *msg = ferror(conn->f)
+			? strerror(errno)
+			: "Unexpected EOF";
+		return set_response(conn, conn_fatal, msg);
+	}
+
+	*string = conn->buf;
+	*len = size;
+	return conn_ok;
+}
+
+static CONN_STATUS
+read_astring(CONN *conn, char **string, size_t *len)
+{
+	char *p = conn->cmdp;
+	if (p == conn->cmdend)
+		return conn_bad;
+	else if (*p == '\"')
+		return read_quoted(conn, string, len);
+	else if (*p == '{')
+		return read_literal(conn, string, len);
+	else
+		return read_atom(conn, string, len);
 }
 
 static CONN_STATUS
@@ -522,6 +629,27 @@ do_READMEM(CONN *conn)
 
 	free(buffer);
 	return status;
+}
+
+static CONN_STATUS
+do_ADDRESS(CONN *conn)
+{
+	CONN_STATUS status;
+	char *tok;
+	size_t len;
+
+	/* Get the symbol name */
+	if ( (status = read_space(conn)) != conn_ok)
+		return status;
+	if ((status = read_astring(conn, &tok, &len)) != conn_ok)
+		return status;
+	tok[len] = 0;
+
+	struct syment *sp = symbol_search(tok);
+	if (!sp)
+		return set_response(conn, conn_no, "No symbol found");
+
+	return send_symbol(conn, sp);
 }
 
 static CONN_STATUS

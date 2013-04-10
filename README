@@ -89,6 +89,23 @@ Commands
                S: <52 (that is 0x34) bytes of binary dump>
                S: A026 OK DUMP completed
 
+* ADDRESS command
+
+   Arguments:  symbol name
+
+   Responses:  REQUIRED untagged responses: SYMBOL
+
+   Result:     OK - symbol translated to address
+               NO - no symbols with the given name could be found
+               BAD - command unknown or arguments invalid
+
+      The ADDRESS command looks up a symbol's kernel virtual address.
+      All numbers in the response are hexadecimal.
+
+   Example:    C: A007 ADDRESS "linux_banner"
+               S: * SYMBOL c07070a0 c0 R "linux_banner"
+               S: A007 OK ADDRESS completed
+
 * SYMBOL command
 
    Arguments:  kernel virtual address
