@@ -96,4 +96,10 @@ enum getline_status cbgetraw(struct getline *s, size_t length,
 			     GETLINEFUNC callback, void *cbdata);
 enum getline_status fdgetraw(struct getline *s, size_t length, int fd);
 
+/* Get the number of buffered (and not yet read) bytes */
+static inline size_t getline_buffered(struct getline *s)
+{
+	return s->end - (s->data + s->len);
+}
+
 #endif	/* __GETLINE_H */

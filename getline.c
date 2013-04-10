@@ -32,7 +32,7 @@ cbgetline(struct getline *s, GETLINEFUNC callback, void *cbdata)
 	ssize_t res;
 	char *p;
 
-	if (s->data + s->len < s->end) {
+	if (getline_buffered(s) > 0) {
 		s->data += s->len;
 		if ( (p = memchr(s->data, '\n', s->end - s->data)) ) {
 			s->len = p - s->data + 1;
@@ -82,7 +82,7 @@ cbgetraw(struct getline *s, size_t length,
 	ssize_t res;
 	char *p;
 
-	if (s->data + s->len < s->end) {
+	if (getline_buffered(s) > 0) {
 		s->data += s->len;
 		p = s->data + length;
 		if (p <= s->end) {
