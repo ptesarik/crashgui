@@ -493,40 +493,44 @@ send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 	return status;
 }
 
-static int
-is_valid_syment(struct syment *sp)
+/* This function returns NULL if sp is invalid */
+static const char *
+get_syment_module(struct syment *sp)
 {
 	if (sp >= st->symtable && sp < st->symend)
-		return 1;
+		return "";
 
 	int i;
 	for (i = 0; i < st->mods_installed; i++) {
 		struct load_module *lm = &st->load_modules[i];
 		if ((sp >= lm->mod_symtable && sp <= lm->mod_symend) ||
 		    (sp >= lm->mod_init_symtable && sp <= lm->mod_init_symend))
-			return 1;
+			return lm->mod_name;
 	}
-	return 0;
+	return NULL;
 }
 
 static CONN_STATUS
 send_symbol(CONN *conn, struct syment *sp)
 {
 	unsigned long addr = sp->value;
-	int valid;
+	const char *modname = get_syment_module(sp);
 	CONN_STATUS status;
 
 	do {
 		struct syment *nextsp = sp + 1;
+		const char *nextmod = get_syment_module(nextsp);
 		unsigned long symsize = 0;
 
-		if ( (valid = is_valid_syment(nextsp)) )
+		if (nextmod)
 			symsize = nextsp->value - sp->value;
 		status = send_untagged(conn, conn_symbol,
-				       "%lx %lx %c \"%s\"",
-				       sp->value, symsize, sp->type, sp->name);
+				       "%lx %lx %c \"%s\" \"%s\"",
+				       sp->value, symsize, sp->type,
+				       sp->name, modname);
 		sp = nextsp;
-	} while (status == conn_ok && valid && sp->value == addr);
+		modname = nextmod;
+	} while (status == conn_ok && modname && sp->value == addr);
 
 	return status;
 }
