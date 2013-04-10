@@ -92,4 +92,8 @@ enum getline_status cbgetline(struct getline *s,
 			      GETLINEFUNC callback, void *cbdata);
 enum getline_status fdgetline(struct getline *s, int fd);
 
+enum getline_status cbgetraw(struct getline *s, size_t length,
+			     GETLINEFUNC callback, void *cbdata);
+enum getline_status fdgetraw(struct getline *s, size_t length, int fd);
+
 #endif	/* __GETLINE_H */
