@@ -50,23 +50,64 @@ public:
 
     void do_refresh()
     {
-        int n, m;
-        unsigned char byteVal;
+        int i, n, m, step;
+        QChar byteVal;
         QString display;
-        QString ws;
+        QString ws, wordws;
+        QString readAddrStr = QString::number(addr, 10);
+        unsigned long long readAddr;
+        bool ok;
 
         // TBBD: Pick a memory type
-        currentView = mainWindow->readMemory(QString::number(addr, 10), 4096, PHYSADDR);
+        currentView = mainWindow->readMemory(readAddrStr, 4096, PHYSADDR);
 
-        for(n = 0; n < currentView.length(); n++)
+        // Use the response address for display
+        readAddr = readAddrStr.toULongLong(&ok);
+        if (!ok)
         {
-            byteVal = (unsigned char)currentView.at(n);
+            readAddr = addr;
+        }
 
+        if (!charView)
+        {
+            switch (objSize)
+            {
+            case BYTE_OBJECTS:
+                step = 1;
+                break;
+
+            case WORD_OBJECTS:
+                step = 2;
+                break;
+
+            case DWORD_OBJECTS:
+                step = 4;
+                break;
+
+            case QWORD_OBJECTS:
+                step = 8;
+                break;
+
+            default:
+                step = 1;
+                break;
+            }
+        }
+        else
+        {
+            // Char view has object size 1
+            step = 1;
+        }
+
+        // TBD: Do what if the currentView.length() is not an integer multiple of the step size?
+
+        for(n = 0; n < currentView.length(); n += step)
+        {
             if ((n % 16) == 0)
             {
                 if (n != 0)
                     display += "\n";
-                ws = QString::number(n, 16);
+                ws = QString::number(readAddr + n, 16);
                 for(m = ws.length(); m < 16; m++)
                 {
                     ws.prepend('0');
@@ -76,12 +117,44 @@ public:
             }
 
             display += "  ";
-            ws = QString::number(byteVal, 16);
-            for(m = ws.length(); m < 2; m++)
+
+            wordws = "";
+            for (i = 0; i < step; i++)
             {
-                ws.prepend('0');
+
+                byteVal = currentView.at(n + i);
+
+                if (!charView)
+                {
+                    ws = QString::number(byteVal.toAscii(), 16);
+                    for(m = ws.length(); m < 2; m++)
+                    {
+                        ws.prepend('0');
+                    }
+
+                    if (endianity == LITTLE_ENDIAN_OBJECTS)
+                    {
+                        wordws.prepend(ws);
+                    }
+                    else
+                    {
+                        wordws += ws;
+                    }
+                }
+                else
+                {
+                    if (byteVal.isPrint())
+                    {
+                        wordws += byteVal;
+                    }
+                    else
+                    {
+                        wordws += '.';
+                    }
+                }
             }
-            display += ws;
+
+            display += wordws;
         }
 
         qDebug() << "Refresh window with " << display;

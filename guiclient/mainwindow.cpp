@@ -130,6 +130,9 @@ void MainWindow::on_fileOpen()
 void MainWindow::on_MemView()
 {
     unsigned long long addr;
+    OBJECT_SIZE objSize;
+    OBJECT_ENDIANITY endianity;
+    bool charView;
     QMdiSubWindow *memframe;
     QMemView *memview;
     MemViewChooser settings;
@@ -137,12 +140,23 @@ void MainWindow::on_MemView()
     if (settings.exec() == QDialog::Accepted)
     {
         addr = settings.addr();
+        objSize = settings.objectSize();
+        endianity = settings.objectEndianity();
+        charView = settings.charView();
         memview = new QMemView;
         openServer("/home/dmair/crashgui.socket");
         qDebug() << "Server is: " << server;
         memview->setMainWindow(this);
         memview->setFileName(currentFilename);
         memview->setAddr(addr);
+        if (charView)
+            memview->setCharView();
+        else
+        {
+            memview->setCharView(false);
+            memview->setObjectSize(objSize);
+            memview->setEndianity(endianity);
+        }
         memframe = mdiView->addSubWindow(memview);
         memframe->show();
         memview->do_refresh();
@@ -236,7 +250,7 @@ err:
 
 bool MainWindow::closeServer()
 {
-    if ((server != -1) && ::close(server) != -1)
+    if ((server != -1) && (::fclose(f) == 0))
         server = -1;
 
     return (server == -1);
@@ -341,7 +355,7 @@ int MainWindow::getRaw(unsigned char **buf, int length)
     return rdlen;
 }
 
-QByteArray MainWindow::readMemory(const QString &addr, unsigned int length, MEM_TYPE mt)
+QByteArray MainWindow::readMemory(QString &addr, unsigned int length, MEM_TYPE mt)
 {
     QString cmdLine;
     QString ws;
@@ -403,8 +417,8 @@ QByteArray MainWindow::readMemory(const QString &addr, unsigned int length, MEM_
             atom = readAtom(reply);
             if (atom.startsWith("DUMP"))
             {
-		atom = readAtom(reply);
-		// TBD: Check that this is the right memory range
+                // Replace the supplied address with the one in the DUMP response
+                addr = readAtom(reply);
 
                 atom = readAtom(reply);
                 if (atom.startsWith("{") && atom.endsWith("}"))
@@ -441,10 +455,8 @@ QByteArray MainWindow::readMemory(const QString &addr, unsigned int length, MEM_
         qDebug() << "Binary data length: " << byteCount << " (" << result.length() << ")";
 
         // Get the remainder of the second line
-        reply = getReply  ();
+        reply = getReply();
         qDebug() << "Second line reply length is " << reply.length();
-
-        // TBD: Check the status atoms after the bytes
     }
 
     return result;
