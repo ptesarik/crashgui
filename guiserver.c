@@ -404,20 +404,22 @@ read_literal(CONN *conn, char **string, size_t *len)
 		return set_response(conn, conn_bad, "Invalid literal");
 	++conn->cmdp;
 
-	if ( (status = ensure_buffer(conn, size)) != conn_ok)
-		return set_response(conn, status, strerror(errno));
-
 	static const char msg[] = "+ Ready for literal data\r\n";
 	if (write(conn->fd, msg, sizeof msg - 1) != sizeof msg - 1)
 		return conn_fatal;
 
-	ssize_t rd = read(conn->fd, conn->buf, size);
-	if (rd != size) {
-		const char *msg = rd < 0 ? strerror(errno) : "Unexpected EOF";
+	enum getline_status gls;
+	do
+		gls = fdgetraw(&conn->line, size, conn->fd);
+	while (gls == GLS_AGAIN);
+	if (gls < GLS_ONE) {
+		const char *msg = gls == GLS_ERROR
+			? strerror(errno)
+			: "Unexpected EOF";
 		return set_response(conn, conn_fatal, msg);
 	}
 
-	*string = conn->buf;
+	*string = conn->line.data;
 	*len = size;
 	return conn_ok;
 }
