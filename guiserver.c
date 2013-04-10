@@ -444,30 +444,32 @@ do_READMEM(CONN *conn)
 		return set_response(conn, conn_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
-	if ( (status = read_space(conn)) != conn_ok)
-		return status;
-	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-		return status;
-	toupper_string(tok, len);
 	int memtype = KVADDR;
-	if (len) {
-		if (len == 6 && !memcmp(tok, "KVADDR", 6))
-			memtype = KVADDR;
-		else if (len == 6 && !memcmp(tok, "UVADDR", 6))
-			memtype = UVADDR;
-		else if (len == 8 && !memcmp(tok, "PHYSADDR", 8))
-			memtype = PHYSADDR;
-		else if (len == 11 && !memcmp(tok, "XENMACHADDR", 11))
-			memtype = XENMACHADDR;
-		else if (len == 8 && !memcmp(tok, "FILEADDR", 8))
-			memtype = FILEADDR;
-		else
-			return set_response(conn, conn_bad,
-					    "Invalid memory type");
-	}
+	if (conn->cmdp != conn->cmdend) {
+		if ((status = read_space(conn)) != conn_ok)
+			return status;
+		if ((status = read_atom(conn, &tok, &len)) != conn_ok)
+			return status;
+		toupper_string(tok, len);
+		if (len) {
+			if (len == 6 && !memcmp(tok, "KVADDR", 6))
+				memtype = KVADDR;
+			else if (len == 6 && !memcmp(tok, "UVADDR", 6))
+				memtype = UVADDR;
+			else if (len == 8 && !memcmp(tok, "PHYSADDR", 8))
+				memtype = PHYSADDR;
+			else if (len == 11 && !memcmp(tok, "XENMACHADDR", 11))
+				memtype = XENMACHADDR;
+			else if (len == 8 && !memcmp(tok, "FILEADDR", 8))
+				memtype = FILEADDR;
+			else
+				return set_response(conn, conn_bad,
+						    "Invalid memory type");
+		}
 
-	if (conn->cmdp != conn->cmdend)
-		return too_many_args(conn);
+		if (conn->cmdp != conn->cmdend)
+			return too_many_args(conn);
+	}
 
 	char *buffer = malloc(bytecnt);
 	if (!buffer)
