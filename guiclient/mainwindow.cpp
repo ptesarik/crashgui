@@ -4,8 +4,11 @@
 #include <QFileDialog>
 #include <QMdiSubWindow>
 
+#include <QDebug>
+
 #include <stdlib.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -16,7 +19,9 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       server(-1),
+      f(NULL),
       currentFilename(""),
+      line(NULL),
       env(QProcessEnvironment::systemEnvironment())
 {
     setupUI();
@@ -24,7 +29,17 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    
+    if (line)
+    {
+        free(line);
+        line = NULL;
+    }
+
+    if (f)
+    {
+        fclose(f);
+        f = NULL;
+    }
 }
 
 void MainWindow::retranslateUI()
@@ -105,6 +120,7 @@ void MainWindow::on_fileOpen()
     if (!currentFilename.isEmpty())
     {
         memview = new QMemView;
+        openServer("/home/dmair/crashgui.socket");
         memview->setFileName(currentFilename);
         memframe = mdiView->addSubWindow(memview);
         memframe->show();
@@ -113,7 +129,7 @@ void MainWindow::on_fileOpen()
 
 void MainWindow::on_MemView()
 {
-    int addr;
+    unsigned long long addr;
     QMdiSubWindow *memframe;
     QMemView *memview;
     MemViewChooser settings;
@@ -122,10 +138,14 @@ void MainWindow::on_MemView()
     {
         addr = settings.addr();
         memview = new QMemView;
+        openServer("/home/dmair/crashgui.socket");
+        qDebug() << "Server is: " << server;
+        memview->setMainWindow(this);
         memview->setFileName(currentFilename);
-        memview->setAddr(0);
+        memview->setAddr(addr);
         memframe = mdiView->addSubWindow(memview);
         memframe->show();
+        memview->do_refresh();
     }
 }
 
@@ -134,36 +154,81 @@ bool MainWindow::openServer(QString path)
     size_t sz = offsetof(struct sockaddr_un, sun_path) + path.length() + 1;
     struct sockaddr_un *sun;
     int fd;
+    QString greeting;
     bool connected = false;
 
-    fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0)
-    {
-      goto err;
-    }
+    qDebug() << "openServer: " << path;
+    qDebug() << "current fd is " << QString::number(server, 10);
 
-    if (!(sun = (struct sockaddr_un *)malloc(sz)))
+    if (server == -1)
     {
-      goto err_close;
-    }
+        qDebug() << "Trying to connect";
 
-    sun->sun_family = AF_UNIX;
-    strcpy(sun->sun_path, path.toAscii());
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0)
+        {
+            qDebug() << "socket failed";
+            goto err;
+        }
+        else
+        {
+            qDebug() << "socket succeeds, fd is " << QString::number(fd, 10);
+        }
 
-    if (::connect(fd, (struct sockaddr *)sun, sz) == 0)
-    {
-      connected = true;
-    }
+        if (!(sun = (struct sockaddr_un *)malloc(sz)))
+        {
+            qDebug() << "malloc failed";
+            goto err_close;
+        }
+        else
+        {
+            qDebug() << "sockaddr malloc succeeds";
+        }
 
-    free(sun);
-    if (connected)
-    {
-        server = fd;
-        return true;
-    }
+        sun->sun_family = AF_UNIX;
+        strcpy(sun->sun_path, path.toAscii());
+
+        if (::connect(fd, (struct sockaddr *)sun, sz) == 0)
+        {
+            qDebug() << "connect succeeds";
+
+            f = ::fdopen(fd, "r+");
+            if (fd)
+            {
+                qDebug() << "fd duplicated";
+                connected = true;
+            }
+        }
+        else
+            qDebug() << "connect failed";
+
+        free(sun);
+        if (connected)
+        {
+            server = fd;
+
+            qDebug() << "Verifying the greeting";
+
+            // Receive and verify the greeting
+            greeting = getReply();
+            qDebug() << "Greeting is: " << greeting;
+            if ((greeting.length() > 0)
+                    && (greeting.indexOf("OK") > 0)
+                    && (greeting.indexOf("crashgui server ready.") > 0))
+            {
+                qDebug() << "Handled greeting";
+                return true;
+            }
+        }
 
 err_close:
-    ::close(fd);
+        ::close(fd);
+    }
+    else
+    {
+        qDebug() << "Already connected";
+        connected = true;
+    }
 
 err:
     return connected;
@@ -177,26 +242,206 @@ bool MainWindow::closeServer()
     return (server == -1);
 }
 
-QString MainWindow::sendCommand(QString cmd, QString Args)
+QString MainWindow::sendCommand(const QString &cmd, const QString &Args)
 {
-    int bufLen;
-    int replyEnd;
-    unsigned char buf[100];
-    int buflen = sizeof(buf);
     QString cmdLine;
-    QString result;
+    QString reply;
+
+    qDebug() << "sendCommand to server: " << QString::number(server, 10);
 
     if (server != -1)
     {
-        cmdLine = cmd;
+        // TBD: Add a tag first
+        cmdLine = "* ";
+        cmdLine += cmd;
         cmdLine += ' ';
         cmdLine += Args;
         cmdLine += "\r\n";
 
-        if (::write(server, cmdLine.toAscii(), cmdLine.length()) == cmdLine.length())
+        qDebug() << "Sending command: " << cmdLine;
+
+        if (::fwrite(cmdLine.toAscii(), 1, cmdLine.length(), f) == (size_t)cmdLine.length())
         {
-            replyEnd = ::read(server, buf, buflen);
+            reply = getReply();
         }
+        else
+            qDebug() << "Write didn\'t match command line length\n";
+    }
+
+    return reply;
+}
+
+QString MainWindow::getReply()
+{
+    ssize_t length;
+    QString reply;
+
+    if (server != -1)
+    {
+        length = getline(&line, &linealloc, f);
+        if (length > 0)
+        {
+            if (line[--length] == '\n')
+            {
+                if ((length > 0) && (line[length - 1] == '\r'))
+                {
+                    line[--length] = 0;
+                    reply = line;
+                }
+            }
+        }
+    }
+
+    return reply;
+}
+
+QString MainWindow::readAtom(QString &cmd)
+{
+    int spacePos;
+    QString result;
+
+    qDebug() << "Getting an atom from: " << cmd;
+
+    spacePos = cmd.indexOf(" ");
+    if (spacePos >= 0)
+    {
+        result = cmd.left(spacePos);
+        cmd = cmd.right(cmd.length() - spacePos - 1);
+    }
+    else
+    {
+        spacePos = 0;
+        result = cmd;
+        cmd = QString("");
+    }
+
+    qDebug() << "Reducing cmd to: " << cmd;
+    qDebug() << "Returning atom: " << result;
+
+    return result;
+}
+
+int MainWindow::getRaw(unsigned char **buf, int length)
+{
+    ssize_t rdlen;
+
+    if (server != -1)
+    {
+        if (! *buf)
+        {
+            *buf = (unsigned char *)malloc(length);
+            if (! *buf)
+            {
+                return -1;
+            }
+        }
+        rdlen = ::fread(*buf, 1, length, f);
+    }
+
+    return rdlen;
+}
+
+QByteArray MainWindow::readMemory(const QString &addr, unsigned int length, MEM_TYPE mt)
+{
+    QString cmdLine;
+    QString ws;
+    QString reply;
+    QString atom;
+    bool ok;
+    int byteCount = 0;
+    int rdLen;
+    int n;
+    unsigned char *buf = NULL;
+    // TBD: Is this safe to use for unsigned char content?
+    QByteArray result;
+
+    qDebug() << "Read memory: " << addr << QString::number(length, 16) << QString::number((int)mt, 16);
+
+    cmdLine += addr;
+    cmdLine += " ";
+    ws += QString::number(length, 16);
+    cmdLine += ws;
+    switch (mt)
+    {
+    case KVADDR:
+        cmdLine += " KVADDR";
+        break;
+
+    case UVADDR:
+        cmdLine += " UVADDR";
+        break;
+
+    case PHYSADDR:
+        cmdLine += " PHYSADDR";
+        break;
+
+    case XENMACHADDR:
+        cmdLine += XENMACHADDR;
+        break;
+
+    case FILEADDR:
+        cmdLine += FILEADDR;
+        break;
+
+    default:
+        cmdLine += " KVADDR";
+        break;
+    }
+
+    qDebug() << "READMEM " << cmdLine;
+
+    reply = sendCommand(QString("READMEM"), cmdLine);
+
+    qDebug() << "Reply length is " << reply.length();
+    qDebug() << "Reply is " << reply;
+
+    if (reply.length() > 0)
+    {
+        // Check for a DUMP response
+        while ((byteCount == 0) && (reply.length() > 0))
+        {
+            atom = readAtom(reply);
+            if (atom.startsWith("DUMP"))
+            {
+                atom = readAtom(reply);
+                if (atom.startsWith("{") && atom.endsWith("}"))
+                {
+                    atom = atom.mid(1, atom.length() - 2);
+                    byteCount = atom.toInt(&ok);
+                    qDebug() << "Byte count from atom is " << byteCount;
+                    if (!ok)
+                        byteCount = 0;
+                    qDebug() << "Byte count adjusted to " << byteCount;
+                }
+                else
+                    qDebug() << "This is not a bytecount atom: " << atom;
+            }
+        }
+
+        if (byteCount > 0)
+        {
+            // Got a byte count, read that much raw
+            rdLen = getRaw(&buf, byteCount);
+            if (rdLen == byteCount)
+            {
+                for (n = 0; n < byteCount; n++)
+                {
+                    result.append(buf[n]);
+                }
+            }
+            if (buf != NULL)
+            {
+                free(buf);
+                buf = NULL;
+            }
+        }
+        qDebug() << "Binary data length: " << byteCount << " (" << result.length() << ")";
+
+        // Get the remainder of the second line
+        reply = getReply  ();
+        qDebug() << "Second line reply length is " << reply.length();
+
+        // TBD: Check the status atoms after the bytes
     }
 
     return result;
