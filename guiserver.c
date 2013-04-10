@@ -623,7 +623,7 @@ run_server(const char *path)
 	while ( (sessfd = accept(fd, NULL, NULL)) >= 0) {
 		FILE *f;
 
-		if (! (f = fdopen(sessfd, "r+")) ) {
+		if (! (f = fdopen(sessfd, "a+")) ) {
 			report_error("Cannot create input stream");
 			close(sessfd);
 			continue;
