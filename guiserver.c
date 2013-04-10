@@ -377,6 +377,44 @@ send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
 	return status;
 }
 
+static int
+is_valid_syment(struct syment *sp)
+{
+	if (sp >= st->symtable && sp < st->symend)
+		return 1;
+
+	int i;
+	for (i = 0; i < st->mods_installed; i++) {
+		struct load_module *lm = &st->load_modules[i];
+		if ((sp >= lm->mod_symtable && sp <= lm->mod_symend) ||
+		    (sp >= lm->mod_init_symtable && sp <= lm->mod_init_symend))
+			return 1;
+	}
+	return 0;
+}
+
+static CONN_STATUS
+send_symbol(CONN *conn, struct syment *sp)
+{
+	unsigned long addr = sp->value;
+	int valid;
+	CONN_STATUS status;
+
+	do {
+		struct syment *nextsp = sp + 1;
+		unsigned long symsize = 0;
+
+		if ( (valid = is_valid_syment(nextsp)) )
+			symsize = nextsp->value - sp->value;
+		status = send_untagged(conn, conn_symbol,
+				       "%lx %lx %c \"%s\"",
+				       sp->value, symsize, sp->type, sp->name);
+		sp = nextsp;
+	} while (status == conn_ok && valid && sp->value == addr);
+
+	return status;
+}
+
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
@@ -510,8 +548,7 @@ do_SYMBOL(CONN *conn)
 	if (!sp)
 		return set_response(conn, conn_no, "No symbol found");
 
-	return send_untagged(conn, conn_symbol, "%lx %c \"%s\"",
-			     sp->value, sp->type, sp->name);
+	return send_symbol(conn, sp);
 }
 
 static SESSION_STATUS
