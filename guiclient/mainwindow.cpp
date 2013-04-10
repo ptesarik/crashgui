@@ -35,11 +35,7 @@ MainWindow::~MainWindow()
         line = NULL;
     }
 
-    if (f)
-    {
-        fclose(f);
-        f = NULL;
-    }
+    closeServer();
 }
 
 void MainWindow::retranslateUI()
@@ -254,10 +250,16 @@ bool MainWindow::closeServer()
 
     if (server != -1)
     {
-        result = sendCommand("TERMINATE", "");
+        qDebug() << "Terminating server...";
+        result = sendCommand(QString("TERMINATE"), QString(""));
 
         if (::fclose(f) == 0)
+        {
+            f = NULL;
             server = -1;
+        }
+
+        qDebug() << "Done";
     }
 
     return (server == -1);
