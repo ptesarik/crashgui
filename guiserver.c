@@ -647,7 +647,7 @@ do_ADDRESS(CONN *conn)
 
 	struct syment *sp = symbol_search(tok);
 	if (!sp)
-		return set_response(conn, conn_no, "No symbol found");
+		return set_response(conn, conn_no, "Symbol not found");
 
 	return send_symbol(conn, sp);
 }
@@ -674,7 +674,7 @@ do_SYMBOL(CONN *conn)
 	ulong offset;
 	struct syment *sp = value_search(addr, &offset);
 	if (!sp)
-		return set_response(conn, conn_no, "No symbol found");
+		return set_response(conn, conn_no, "Symbol not found");
 
 	return send_symbol(conn, sp);
 }
