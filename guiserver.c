@@ -463,19 +463,19 @@ send_untagged(CONN *conn, CONN_STATUS status, const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	int n = vsnprintf(NULL, 0, fmt, ap);
+	int n = vsnprintf(conn->buf, conn->bufalloc, fmt, ap);
 	va_end(ap);
 
-	char *msg = malloc(n + 1);
-	if (!msg)
-		return set_response(conn, conn_fatal, strerror(errno));
-	va_start(ap, fmt);
-	vsnprintf(msg, n + 1, fmt, ap);
-	va_end(ap);
+	if (n >= conn->bufalloc) {
+		if (ensure_buffer(conn, n + 1) != conn_ok)
+			return set_response(conn, conn_fatal, strerror(errno));
+		va_start(ap, fmt);
+		vsnprintf(conn->buf, conn->bufalloc, fmt, ap);
+		va_end(ap);
+	}
 
 	CONN_STATUS oldstatus = conn->status;
-	set_response(conn, status, msg);
-	free(msg);
+	set_response(conn, status, conn->buf);
 	status = conn_respond(conn, 0);
 	conn->status = (status == conn_fatal) ? status : oldstatus;
 	return status;
