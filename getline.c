@@ -84,9 +84,10 @@ cbgetraw(struct getline *s, size_t length,
 
 	if (s->data + s->len < s->end) {
 		s->data += s->len;
-		if (s->end - s->data >= length) {
+		p = s->data + length;
+		if (p <= s->end) {
 			s->len = length;
-			return s->data + s->len < s->end
+			return memchr(p, '\n', s->end - p)
 				? GLS_MORE
 				: GLS_ONE;
 		}
@@ -113,9 +114,10 @@ cbgetraw(struct getline *s, size_t length,
 	s->end += res;
 	*s->end = 0;
 
-	if (s->end - s->data >= length) {
+	p = s->data + length;
+	if (p <= s->end) {
 		s->len = length;
-		return s->data + s->len < s->end
+		return memchr(p, '\n', s->end - p)
 			? GLS_MORE
 			: GLS_ONE;
 	} else if (!res) {
