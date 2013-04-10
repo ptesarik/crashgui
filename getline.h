@@ -32,8 +32,8 @@ enum getline_status {
 };
 
 struct getline {
-	char *line;		/* line start */
-	size_t len;		/* line length */
+	char *data;		/* data start */
+	size_t len;		/* data length */
 
 	char *buf;		/* buffer base address */
 	char *end;		/* buffer end */

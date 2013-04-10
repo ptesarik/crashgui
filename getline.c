@@ -32,28 +32,28 @@ cbgetline(struct getline *s, GETLINEFUNC callback, void *cbdata)
 	ssize_t res;
 	char *p;
 
-	if (s->line + s->len < s->end) {
-		s->line += s->len;
-		if ( (p = memchr(s->line, '\n', s->end - s->line)) ) {
-			s->len = p - s->line + 1;
+	if (s->data + s->len < s->end) {
+		s->data += s->len;
+		if ( (p = memchr(s->data, '\n', s->end - s->data)) ) {
+			s->len = p - s->data + 1;
 			if (memchr(p + 1, '\n', s->end - p - 1))
 				return GLS_MORE;
 			else
 				return GLS_ONE;
 		}
-		memmove(s->buf, s->line, s->end - s->line + 1);
-		s->end -= s->line - s->buf;
+		memmove(s->buf, s->data, s->end - s->data + 1);
+		s->end -= s->data - s->buf;
 	} else
 		s->end = s->buf;
 
-	s->line = s->buf;
+	s->data = s->buf;
 	s->len = 0;
 
 	if (s->buf + s->alloc - s->end < BUFFER_LOW) {
 		if ( !(p = realloc(s->buf, s->alloc + BUFFER_INCR)) )
 			return GLS_ERROR;
 		s->end = p + (s->end - s->buf);
-		s->buf = s->line = p;
+		s->buf = s->data = p;
 		s->alloc += BUFFER_INCR;
 	}
 

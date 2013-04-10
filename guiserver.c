@@ -218,15 +218,15 @@ do_getcommand(CONN * conn)
 	 * but we're lenient on what we accept and also allow LF.
 	 */
 	size_t length = conn->line.len - 1;
-	if (length > 0 && conn->line.line[length-1] == '\r')
+	if (length > 0 && conn->line.data[length-1] == '\r')
 		--length;
 
 	conn->taglen = 0;
-	char *p = conn->line.line, *endp = p + length;
+	char *p = conn->line.data, *endp = p + length;
 	while (p != endp && *p != ' ')
 		++conn->taglen, ++p;
 	if (!copy_string(&conn->tag, &conn->tagalloc,
-			 conn->line.line, conn->taglen)) {
+			 conn->line.data, conn->taglen)) {
 		conn->taglen = 0;
 		return conn_fatal;
 	}
