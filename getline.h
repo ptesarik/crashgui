@@ -20,11 +20,11 @@
 #define __GETLINE_H
 
 enum getline_status {
-	GLS_ONE = 0,		/* complete line, no more lines buffered */
+	GLS_FINAL = 0,		/* incomplete last line of a file (not
+				   terminated by a newline) */
+	GLS_ONE,		/* complete line, no more lines buffered */
 	GLS_MORE,		/* complete line, at least one more line
 				   buffered already */
-	GLS_FINAL,		/* incomplete last line of a file (not
-				   terminated by a newline) */
 
 	GLS_AGAIN = -1,		/* not a complete line yet (would block) */
 	GLS_EOF = -2,		/* end-of-file reached */
