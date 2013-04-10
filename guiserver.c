@@ -506,8 +506,11 @@ get_syment_module(struct syment *sp)
 	return NULL;
 }
 
+/* If byname is non-zero, multiple symbols will be searched by name rather
+ * than by symbol value (address).
+ */
 static CONN_STATUS
-send_symbol(CONN *conn, struct syment *sp)
+send_symbol(CONN *conn, struct syment *sp, int byname)
 {
 	unsigned long addr = sp->value;
 	const char *modname = get_syment_module(sp);
@@ -524,9 +527,16 @@ send_symbol(CONN *conn, struct syment *sp)
 				       "%lx %lx %c \"%s\" \"%s\"",
 				       sp->value, symsize, sp->type,
 				       sp->name, modname);
+
+		if (byname) {
+			nextsp = symbol_search_next(sp->name, sp);
+			nextmod = nextsp ? get_syment_module(nextsp) : NULL;
+		} else if (nextsp->value != addr)
+			nextmod = NULL;
+
 		sp = nextsp;
 		modname = nextmod;
-	} while (status == conn_ok && modname && sp->value == addr);
+	} while (status == conn_ok && modname);
 
 	return status;
 }
@@ -664,7 +674,7 @@ do_ADDRESS(CONN *conn)
 	if (!sp)
 		return set_response(conn, conn_no, "Symbol not found");
 
-	return send_symbol(conn, sp);
+	return send_symbol(conn, sp, 1);
 }
 
 static CONN_STATUS
@@ -691,7 +701,7 @@ do_SYMBOL(CONN *conn)
 	if (!sp)
 		return set_response(conn, conn_no, "Symbol not found");
 
-	return send_symbol(conn, sp);
+	return send_symbol(conn, sp, 0);
 }
 
 static SESSION_STATUS
