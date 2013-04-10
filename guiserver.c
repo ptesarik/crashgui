@@ -477,18 +477,6 @@ send_untagged(CONN *conn, CONN_STATUS status, const char *fmt, ...)
 	return status;
 }
 
-static CONN_STATUS
-send_literal(CONN *conn, CONN_STATUS status, void *buffer, size_t length)
-{
-	status = send_untagged(conn, status, "{%lu}", (unsigned long) length);
-	if (status == conn_ok) {
-		size_t sz = fwrite(buffer, 1, length, conn->f);
-		if (sz != length)
-			status = conn_fatal;
-	}
-	return status;
-}
-
 /* This function returns NULL if sp is invalid */
 static const char *
 get_syment_module(struct syment *sp)
@@ -644,7 +632,13 @@ do_READMEM(CONN *conn)
 		     "crashgui", RETURN_ON_ERROR))
 		return set_response(conn, conn_no, "Read error");
 
-	status = send_literal(conn, conn_dump, buffer, bytecnt);
+	status = send_untagged(conn, conn_dump, "%lx {%lu}",
+			       addr, (unsigned long) bytecnt);
+	if (status == conn_ok) {
+		size_t sz = fwrite(buffer, 1, bytecnt, conn->f);
+		if (sz != bytecnt)
+			status = conn_fatal;
+	}
 
 	free(buffer);
 	return status;

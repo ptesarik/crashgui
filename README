@@ -85,7 +85,7 @@ Commands
          File address.
 
    Example:    C: A026 READMEM c009bf2c 34
-               S: * DUMP {52}
+               S: * DUMP c009bf2c {52}
                S: <52 (that is 0x34) bytes of binary dump>
                S: A026 OK DUMP completed
 

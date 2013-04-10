@@ -403,6 +403,9 @@ QByteArray MainWindow::readMemory(const QString &addr, unsigned int length, MEM_
             atom = readAtom(reply);
             if (atom.startsWith("DUMP"))
             {
+		atom = readAtom(reply);
+		// TBD: Check that this is the right memory range
+
                 atom = readAtom(reply);
                 if (atom.startsWith("{") && atom.endsWith("}"))
                 {
