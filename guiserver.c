@@ -652,8 +652,3 @@ void __attribute__((destructor))
 guiserver_fini(void)
 {
 }
-
-int main(int argc, char **argv)
-{
-	return run_server(argv[1]);
-}
