@@ -398,11 +398,7 @@ read_literal(CONN *conn, char **string, size_t *len)
 		return set_response(conn, conn_bad, "Invalid literal");
 	++conn->cmdp;
 
-	/* Check for overflow */
-	if (size == (size_t)-1)
-		return set_response(conn, conn_bad, "Literal too big");
-
-	if ( (status = ensure_buffer(conn, size + 1)) != conn_ok)
+	if ( (status = ensure_buffer(conn, size)) != conn_ok)
 		return set_response(conn, status, strerror(errno));
 
 	fputs("+ Ready for literal data\r\n", conn->f);
@@ -656,6 +652,12 @@ do_ADDRESS(CONN *conn)
 		return status;
 	if ((status = read_astring(conn, &tok, &len)) != conn_ok)
 		return status;
+	if ((status = ensure_buffer(conn, len + 1)) != conn_ok)
+		return set_response(conn, status, strerror(errno));
+	if (tok != conn->buf) {
+		memcpy(conn->buf, tok, len);
+		tok = conn->buf;
+	}
 	tok[len] = 0;
 
 	struct syment *sp = symbol_search(tok);
