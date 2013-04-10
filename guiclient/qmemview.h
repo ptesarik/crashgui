@@ -2,6 +2,8 @@
 #define QMEMVIEW_H
 
 #include <QLabel>
+#include <QScrollBar>
+#include <QResizeEvent>
 
 #include <QDebug>
 
@@ -126,7 +128,7 @@ public:
 
                 if (!charView)
                 {
-                    ws = QString::number(byteVal.toAscii(), 16);
+                    ws = QString::number((unsigned char)byteVal.toAscii(), 16);
                     for(m = ws.length(); m < 2; m++)
                     {
                         ws.prepend('0');
@@ -157,13 +159,16 @@ public:
             display += wordws;
         }
 
-        qDebug() << "Refresh window with " << display;
+//        qDebug() << "Refresh window with " << display;
 
         setText(display);
     }
 
 protected:
+    virtual void resizeEvent(QResizeEvent * event);
+
     MainWindow *mainWindow;
+    QScrollBar vsb;
     unsigned long long addr;
     bool charView;
     OBJECT_ENDIANITY endianity;

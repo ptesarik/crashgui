@@ -250,8 +250,15 @@ err:
 
 bool MainWindow::closeServer()
 {
-    if ((server != -1) && (::fclose(f) == 0))
-        server = -1;
+    QString result;
+
+    if (server != -1)
+    {
+        result = sendCommand("TERMINATE", "");
+
+        if (::fclose(f) == 0)
+            server = -1;
+    }
 
     return (server == -1);
 }
@@ -268,8 +275,11 @@ QString MainWindow::sendCommand(const QString &cmd, const QString &Args)
         // TBD: Add a tag first
         cmdLine = "* ";
         cmdLine += cmd;
-        cmdLine += ' ';
-        cmdLine += Args;
+        if (Args.length() > 0)
+        {
+            cmdLine += ' ';
+            cmdLine += Args;
+        }
         cmdLine += "\r\n";
 
         qDebug() << "Sending command: " << cmdLine;
