@@ -29,7 +29,7 @@ endif
 CFLAGS=-g -Wall
 
 MODULES=guiserver.so
-GUISERVER_SRC=guiserver.c
+GUISERVER_SRC=guiserver.c getline.c
 
 all: $(MODULES)
 

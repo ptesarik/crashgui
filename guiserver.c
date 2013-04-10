@@ -13,6 +13,8 @@
 
 #include <crash/defs.h>
 
+#include "getline.h"
+
 void guiserver_init(void);    /* constructor function */
 void guiserver_fini(void);    /* destructor function (optional) */
 
@@ -34,6 +36,7 @@ typedef enum conn_status {
 	conn_dump,		/* DUMP response */
 	conn_symbol,		/* SYMBOL response */
 
+	conn_again,		/* More data needed */
 	conn_eof,		/* End of stream */
 	conn_fatal = -1		/* Fatal error */
 } CONN_STATUS;
@@ -45,15 +48,17 @@ typedef enum session_status {
 } SESSION_STATUS;
 
 typedef struct conn {
-	/* socket stream */
-	FILE *f;
+	int fd;
 
 	enum conn_status status;
 	const struct proto_command *lastcmd;
 
+	/* non-zero if terminating */
+	int terminate;
+
 	/* current input line */
-	char *line;
-	size_t linealloc;
+	struct getline line;
+	enum getline_status gls;
 
 	/* current tag */
 	char *tag;
@@ -73,9 +78,6 @@ typedef struct conn {
 	/* buffer (e.g. for literals) */
 	char *buf;
 	size_t bufalloc;
-
-	/* terminating */
-	int terminate;
 } CONN;
 
 struct proto_command {
@@ -143,11 +145,11 @@ toupper_string(char *str, size_t len)
 }
 
 static CONN *
-conn_init(FILE *f)
+conn_init(int fd)
 {
 	CONN *ret = calloc(1, sizeof(struct conn));
 	if (ret) {
-		ret->f = f;
+		ret->fd = fd;
 
 		/* Prepare the greeting message */
 		int n;
@@ -167,10 +169,10 @@ conn_init(FILE *f)
 static void
 conn_done(CONN *conn)
 {
-	if (conn->f)
-		fclose(conn->f);
-	if (conn->line)
-		free(conn->line);
+	if (conn->fd)
+		close(conn->fd);
+	if (conn->line.buf)
+		free(conn->line.buf);
 	if (conn->tag)
 		free(conn->tag);
 	if (conn->cmd)
@@ -199,25 +201,32 @@ ensure_buffer(CONN *conn, size_t size)
 static CONN_STATUS
 do_getcommand(CONN * conn)
 {
-	ssize_t length = getline(&conn->line, &conn->linealloc, conn->f);
-	if (length <= 0)
-		return ferror(conn->f) ? conn_fatal : conn_eof;
-
-	/* Every line must be terminated by a LF. */
-	if (conn->line[--length] != '\n')
+	conn->gls = fdgetline(&conn->line, conn->fd);
+	switch (conn->gls) {
+	case GLS_AGAIN:
+		return conn_again;
+	case GLS_FINAL:
+	case GLS_EOF:
 		return conn_eof;
+	case GLS_ERROR:
+		return conn_fatal;
+	default:
+		break;
+	}
+
 	/* The protocol requires terminating lines with CRLF,
 	 * but we're lenient on what we accept and also allow LF.
 	 */
-	if (length > 0 && conn->line[length-1] == '\r')
-		conn->line[--length] = 0;
+	size_t length = conn->line.len - 1;
+	if (length > 0 && conn->line.line[length-1] == '\r')
+		--length;
 
 	conn->taglen = 0;
-	char *p = conn->line, *endp = p + length;
+	char *p = conn->line.line, *endp = p + length;
 	while (p != endp && *p != ' ')
 		++conn->taglen, ++p;
 	if (!copy_string(&conn->tag, &conn->tagalloc,
-			 conn->line, conn->taglen)) {
+			 conn->line.line, conn->taglen)) {
 		conn->taglen = 0;
 		return conn_fatal;
 	}
@@ -243,23 +252,12 @@ conn_getcommand(CONN *conn)
 }
 
 static CONN_STATUS
-do_respond(CONN *conn, int tagged)
+conn_respond(CONN *conn, int tagged)
 {
-	size_t sz;
-
-	size_t taglen = conn->taglen;
-	if (tagged && taglen) {
-		conn->taglen = 0;
-		sz = fwrite(conn->tag, 1, taglen, conn->f);
-		if (sz != taglen)
-			return conn_fatal;
-	} else if (putc('*', conn->f) < 0)
-		return conn_fatal;
-
-	if (putc(' ', conn->f) < 0)
-		return conn_fatal;
-
+	static const char msg_completed[] = " completed";
+	static const char msg_failed[] = " failed";
 	const char *cond;
+
 	switch (conn->status) {
 	case conn_ok:	cond = "OK";  break;
 	case conn_no:	cond = "NO";  break;
@@ -269,46 +267,53 @@ do_respond(CONN *conn, int tagged)
 	case conn_bad:
 	default:	cond = "BAD"; break;
 	}
-	sz = fwrite(cond, 1, strlen(cond), conn->f);
-	if (sz != strlen(cond))
+
+	size_t sz = (conn->taglen ?: 1) /* tag or "*" */
+		+ 1			/* SP */
+		+ strlen(cond)		/* condition code */
+		+ 1			/* SP */
+		+ (conn->resplen ?:	/* custom response, or */
+		   (conn->lastcmd ?
+		    strlen(conn->lastcmd->name) /* command name */
+		    + 1				/* SP */
+		    + sizeof msg_completed - 1	/* " completed" */
+		    : 0))		/* or nothing */
+		+ 2;			/* CRLF */
+
+	if (ensure_buffer(conn, sz + 1) != conn_ok)
 		return conn_fatal;
 
-	size_t resplen = conn->resplen;
-	if (resplen) {
+	char *p = conn->buf;
+	if (conn->taglen) {
+		memcpy(p, conn->tag, conn->taglen);
+		p += conn->taglen;
+		conn->taglen = 0;
+	} else
+		*p++ = '*';
+
+	*p++ = ' ';
+	p = stpcpy(p, cond);
+	*p++ = ' ';
+
+	if (conn->resplen) {
+		memcpy(p, conn->resp, conn->resplen);
+		p += conn->resplen;
 		conn->resplen = 0;
-		if (putc(' ', conn->f) < 0)
-			return conn_fatal;
-
-		sz = fwrite(conn->resp, 1, resplen, conn->f);
-		if (sz != resplen)
-			return conn_fatal;
-	} else if (conn->status == conn_ok && conn->lastcmd) {
-		if (putc(' ', conn->f) < 0)
-			return conn_fatal;
-
-		size_t len = strlen(conn->lastcmd->name);
-		sz = fwrite(conn->lastcmd->name, 1, len, conn->f);
-		if (sz != len)
-			return conn_fatal;
-
-		static const char msg[] = " completed";
-		sz = fwrite(msg, 1, sizeof(msg) - 1, conn->f);
-		if (sz != sizeof(msg) - 1)
-			return conn_fatal;
+	} else if (conn->lastcmd) {
+		p = stpcpy(p, conn->lastcmd->name);
+		p = stpcpy(p, (conn->status == conn_ok
+			       ? msg_completed
+			       : msg_failed));
 	}
 
-	if (fwrite(crlf, 1, sizeof(crlf), conn->f) != sizeof(crlf))
+	memcpy(p, crlf, sizeof crlf);
+	p += sizeof crlf;
+
+	sz = p - conn->buf;
+	if (write(conn->fd, conn->buf, sz) != sz)
 		return conn_fatal;
 
 	return conn_ok;
-}
-
-static CONN_STATUS
-conn_respond(CONN *conn, int tagged)
-{
-	CONN_STATUS ret = do_respond(conn, tagged);
-	fflush(conn->f);
-	return ret;
 }
 
 static CONN_STATUS
@@ -401,13 +406,13 @@ read_literal(CONN *conn, char **string, size_t *len)
 	if ( (status = ensure_buffer(conn, size)) != conn_ok)
 		return set_response(conn, status, strerror(errno));
 
-	fputs("+ Ready for literal data\r\n", conn->f);
-	fflush(conn->f);
+	static const char msg[] = "+ Ready for literal data\r\n";
+	if (write(conn->fd, msg, sizeof msg - 1) != sizeof msg - 1)
+		return conn_fatal;
 
-	if (fread(conn->buf, 1, size, conn->f) != size) {
-		const char *msg = ferror(conn->f)
-			? strerror(errno)
-			: "Unexpected EOF";
+	ssize_t rd = read(conn->fd, conn->buf, size);
+	if (rd != size) {
+		const char *msg = rd < 0 ? strerror(errno) : "Unexpected EOF";
 		return set_response(conn, conn_fatal, msg);
 	}
 
@@ -532,7 +537,7 @@ send_symbol(CONN *conn, struct syment *sp, int byname)
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
-	if (shutdown(fileno(conn->f), SHUT_RD))
+	if (shutdown(conn->fd, SHUT_RD))
 		return set_response(conn, conn_fatal, strerror(errno));
 
 	return send_untagged(conn, conn_bye, "%s", reason);
@@ -635,7 +640,7 @@ do_READMEM(CONN *conn)
 	status = send_untagged(conn, conn_dump, "%lx {%lu}",
 			       addr, (unsigned long) bytecnt);
 	if (status == conn_ok) {
-		size_t sz = fwrite(buffer, 1, bytecnt, conn->f);
+		size_t sz = write(conn->fd, buffer, bytecnt);
 		if (sz != bytecnt)
 			status = conn_fatal;
 	}
@@ -699,13 +704,13 @@ do_ADDRESS(CONN *conn)
 }
 
 static SESSION_STATUS
-run_session(FILE *f)
+run_session(int fd)
 {
 	CONN *conn;
 	CONN_STATUS status;
 	int terminate = 0;
 
-	if (! (conn = conn_init(f)) )
+	if (! (conn = conn_init(fd)) )
 		return session_error;
 
 	do {
@@ -768,15 +773,7 @@ run_server(const char *path)
 	}
 
 	while ( (sessfd = accept(fd, NULL, NULL)) >= 0) {
-		FILE *f;
-
-		if (! (f = fdopen(sessfd, "a+")) ) {
-			report_error("Cannot create input stream");
-			close(sessfd);
-			continue;
-		}
-
-		SESSION_STATUS status = run_session(f);
+		SESSION_STATUS status = run_session(sessfd);
 		if (status == session_terminate) {
 			ret = 0;
 			break;
