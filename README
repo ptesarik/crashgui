@@ -118,10 +118,10 @@ Commands
 
       The SYMBOL command translates a kernel virtual address to a symbol.
       The argument is interpreted as a hexadecimal kernel virtual address.
-      Addresses in the response are also hexadecimal.
+      All numbers in the response are hexadecimal.
 
    Example:    C: A027 SYMBOL c07070a0
-               S: * SYMBOL c07070a0 R "linux_banner"
+               S: * SYMBOL c07070a0 c0 R "linux_banner"
                S: A027 OK SYMBOL completed
 
 Authentication
