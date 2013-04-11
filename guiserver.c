@@ -736,8 +736,10 @@ send_symbol_data(CONN *conn)
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
-	if (shutdown(conn->pfd.fd, SHUT_RD))
-		return set_response(conn, conn_fatal, strerror(errno));
+	if (shutdown(conn->pfd.fd, SHUT_RD)) {
+		close(conn->pfd.fd);
+		conn->pfd.fd = -1;
+	}
 
 	return send_untagged(conn, conn_bye, "%s", reason);
 }
@@ -952,7 +954,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 	while (status == conn_ok && !conn->pfd.events)
 		status = conn->handler(conn);
 
-	if (status == conn_fatal || status == conn_eof)
+	if (status == conn_fatal || status == conn_eof || conn->pfd.fd < 0)
 		conn_done(conn);
 
 	return conn_ok;
