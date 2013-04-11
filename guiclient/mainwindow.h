@@ -11,15 +11,7 @@
 #include <QProcessEnvironment>
 #include <QByteArray>
 
-
-typedef enum mem_type
-{
-    KVADDR,
-    UVADDR,
-    PHYSADDR,
-    XENMACHADDR,
-    FILEADDR
-}MEM_TYPE;
+#include "memtypes.h"
 
 class MainWindow : public QMainWindow
 {
@@ -29,7 +21,7 @@ public:
     MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
-    QByteArray readMemory(QString &addr, unsigned int length, MEM_TYPE mt = KVADDR);
+    QByteArray readMemory(QString &addr, unsigned int length, MEM_TYPE mt = PHYSADDR);
 
 protected:
     int server;

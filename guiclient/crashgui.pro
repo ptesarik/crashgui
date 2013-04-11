@@ -20,7 +20,8 @@ SOURCES += main.cpp\
 HEADERS  += mainwindow.h \
          qmemview.h \
 	 guiserver.h \
-    memviewchooser.h
+    memviewchooser.h \
+    memtypes.h
 
 FORMS += \
     memviewchooser.ui

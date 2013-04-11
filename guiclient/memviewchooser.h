@@ -21,7 +21,8 @@ public:
     bool charView();
     OBJECT_ENDIANITY objectEndianity();
     OBJECT_SIZE objectSize();
-    
+    MEM_TYPE memoryType();
+
 private slots:
     void on_cbText_clicked();
 

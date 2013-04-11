@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>333</width>
-    <height>300</height>
+    <height>334</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,7 +20,7 @@
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>240</y>
+     <y>274</y>
      <width>273</width>
      <height>32</height>
     </rect>
@@ -181,6 +181,71 @@
     </property>
    </widget>
   </widget>
+  <widget class="QGroupBox" name="memoryGroup">
+   <property name="geometry">
+    <rect>
+     <x>30</x>
+     <y>244</y>
+     <width>273</width>
+     <height>29</height>
+    </rect>
+   </property>
+   <property name="title">
+    <string/>
+   </property>
+   <widget class="QRadioButton" name="rbKVM">
+    <property name="geometry">
+     <rect>
+      <x>30</x>
+      <y>4</y>
+      <width>51</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Kern</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="rbUVM">
+    <property name="geometry">
+     <rect>
+      <x>85</x>
+      <y>4</y>
+      <width>52</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>User</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="rbPhys">
+    <property name="geometry">
+     <rect>
+      <x>137</x>
+      <y>4</y>
+      <width>52</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Phys</string>
+    </property>
+   </widget>
+   <widget class="QRadioButton" name="rbFile">
+    <property name="geometry">
+     <rect>
+      <x>193</x>
+      <y>4</y>
+      <width>45</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>File</string>
+    </property>
+   </widget>
+  </widget>
  </widget>
  <tabstops>
   <tabstop>startAddr</tabstop>
@@ -191,6 +256,10 @@
   <tabstop>qwordButton</tabstop>
   <tabstop>littleEndian</tabstop>
   <tabstop>bigEndian</tabstop>
+  <tabstop>rbKVM</tabstop>
+  <tabstop>rbUVM</tabstop>
+  <tabstop>rbPhys</tabstop>
+  <tabstop>rbFile</tabstop>
   <tabstop>buttonBox</tabstop>
  </tabstops>
  <resources/>

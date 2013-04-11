@@ -11,6 +11,7 @@ MemViewChooser::MemViewChooser(QWidget *parent) :
     ui->cbText->setChecked(false);
     ui->dwordButton->setChecked(true);
     ui->littleEndian->setChecked(true);
+    ui->rbKVM->setChecked(true);
 }
 
 MemViewChooser::~MemViewChooser()
@@ -75,6 +76,31 @@ OBJECT_SIZE MemViewChooser::objectSize()
 
     // TBD: Is there a default size or is there an error
     return DWORD_OBJECTS;
+}
+
+MEM_TYPE MemViewChooser::memoryType()
+{
+    if (ui->rbKVM->isChecked())
+    {
+        return KVADDR;
+    }
+    if (ui->rbUVM)
+    {
+        return UVADDR;
+    }
+    if (ui->rbPhys)
+    {
+        return PHYSADDR;
+    }
+
+    // TBD: XENMACHADDR
+
+    if (ui->rbFile)
+    {
+        return FILEADDR;
+    }
+
+    return KVADDR;
 }
 
 void MemViewChooser::on_cbText_clicked()

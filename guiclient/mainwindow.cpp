@@ -55,7 +55,7 @@ void MainWindow::setupUI()
     if (objectName().isEmpty())
         setObjectName(QString::fromUtf8("MainWindow"));
 
-    resize(460, 378);
+//    resize(460, 378);
 
     action_Open = new QAction(this);
     action_Open->setObjectName(QString::fromUtf8("action_Open"));
@@ -381,7 +381,7 @@ QByteArray MainWindow::readMemory(QString &addr, unsigned int length, MEM_TYPE m
     // TBD: Is this safe to use for unsigned char content?
     QByteArray result;
 
-    qDebug() << "Read memory: " << addr << QString::number(length, 16) << QString::number((int)mt, 16);
+    qDebug() << "Read memory: " << addr << QString::number(length, 16);
 
     cmdLine += addr;
     cmdLine += " ";

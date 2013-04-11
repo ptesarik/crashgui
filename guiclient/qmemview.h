@@ -7,23 +7,12 @@
 
 #include <QDebug>
 
+#include "memtypes.h"
 #include "mainwindow.h"
 
-typedef enum object_size
-{
-    BYTE_OBJECTS,
-    WORD_OBJECTS,
-    DWORD_OBJECTS,
-    QWORD_OBJECTS
-}OBJECT_SIZE;
+#define TEXT_MARGIN 4
 
-typedef enum object_endianity
-{
-    LITTLE_ENDIAN_OBJECTS,
-    BIG_ENDIAN_OBJECTS
-}OBJECT_ENDIANITY;
-
-class QMemView : public QLabel
+class QMemView : public QWidget
 {
     Q_OBJECT
 public:
@@ -34,153 +23,59 @@ public:
         mainWindow = newMainWindow;
     }
 
+    QSize sizeHint() const;
+
     void setAddr(unsigned long long newAddr, bool refresh = false);
     void setCharView(bool newCharView = true, bool refresh = false);
     void setEndianity(OBJECT_ENDIANITY newEndianity, bool refresh = false);
     void setFileName(QString fname);
     void setObjectSize(OBJECT_SIZE newObjSize, bool refresh = false);
+    void setMemType(MEM_TYPE newMemType, bool refresh = false);
 
-    void setView(unsigned long long newAddr, bool newCharView, OBJECT_SIZE newObjSize, OBJECT_ENDIANITY newEndianity, bool refresh = true)
+    void setView(unsigned long long newAddr, bool newCharView, OBJECT_SIZE newObjSize, OBJECT_ENDIANITY newEndianity, MEM_TYPE newMemType, bool refresh = true)
     {
         setAddr(newAddr);
         setCharView(newCharView);
         setObjectSize(newObjSize);
         setEndianity(newEndianity);
+        setMemType(newMemType);
         if (refresh)
             do_refresh();
     }
 
-    void do_refresh()
-    {
-        int i, n, m, step;
-        QChar byteVal;
-        QString display;
-        QString ws, wordws;
-        QString readAddrStr = QString::number(addr, 10);
-        unsigned long long readAddr;
-        bool ok;
-
-        // TBBD: Pick a memory type
-        currentView = mainWindow->readMemory(readAddrStr, 4096, PHYSADDR);
-
-        // Use the response address for display
-        readAddr = readAddrStr.toULongLong(&ok);
-        if (!ok)
-        {
-            readAddr = addr;
-        }
-
-        if (!charView)
-        {
-            switch (objSize)
-            {
-            case BYTE_OBJECTS:
-                step = 1;
-                break;
-
-            case WORD_OBJECTS:
-                step = 2;
-                break;
-
-            case DWORD_OBJECTS:
-                step = 4;
-                break;
-
-            case QWORD_OBJECTS:
-                step = 8;
-                break;
-
-            default:
-                step = 1;
-                break;
-            }
-        }
-        else
-        {
-            // Char view has object size 1
-            step = 1;
-        }
-
-        // TBD: Do what if the currentView.length() is not an integer multiple of the step size?
-
-        for(n = 0; n < currentView.length(); n += step)
-        {
-            if ((n % 16) == 0)
-            {
-                if (n != 0)
-                    display += "\n";
-                ws = QString::number(readAddr + n, 16);
-                for(m = ws.length(); m < 16; m++)
-                {
-                    ws.prepend('0');
-                }
-                ws.prepend("  ");
-                display += ws;
-            }
-
-            display += "  ";
-
-            wordws = "";
-            for (i = 0; i < step; i++)
-            {
-
-                byteVal = currentView.at(n + i);
-
-                if (!charView)
-                {
-                    ws = QString::number((unsigned char)byteVal.toAscii(), 16);
-                    for(m = ws.length(); m < 2; m++)
-                    {
-                        ws.prepend('0');
-                    }
-
-                    if (endianity == LITTLE_ENDIAN_OBJECTS)
-                    {
-                        wordws.prepend(ws);
-                    }
-                    else
-                    {
-                        wordws += ws;
-                    }
-                }
-                else
-                {
-                    if (byteVal.isPrint())
-                    {
-                        wordws += byteVal;
-                    }
-                    else
-                    {
-                        wordws += '.';
-                    }
-                }
-            }
-
-            display += wordws;
-        }
-
-//        qDebug() << "Refresh window with " << display;
-
-        setText(display);
-    }
+    void do_refresh();
 
 protected:
+    void paintEvent(QPaintEvent *event);
     virtual void resizeEvent(QResizeEvent * event);
 
+    int getPreferredSizeInfo();
+    int getPreferredWidth() const;
+    QString createMemoryLine(unsigned long offset);
+
     MainWindow *mainWindow;
+    QFont viewFont;
+    QSize lineHeight;
+    QSize charViewSize;
+    QSize byteViewSize;
+    QSize wordViewSize;
+    QSize dwordViewSize;
+    QSize qwordViewSize;
     QScrollBar vsb;
+    int curScroll;
     unsigned long long addr;
     bool charView;
     OBJECT_ENDIANITY endianity;
     QString fileName;
     OBJECT_SIZE objSize;
+    MEM_TYPE memType;
 
     QByteArray currentView;
 
 signals:
     
 public slots:
-    
+    void scrolled(int value);
 };
 
 #endif // QMEMVIEW_H
