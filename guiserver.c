@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <poll.h>
 
 #include <crash/defs.h>
 
@@ -41,20 +42,18 @@ typedef enum conn_status {
 	conn_fatal = -1		/* Fatal error */
 } CONN_STATUS;
 
-typedef enum session_status {
-	session_normal,		/* Normal session end */
-	session_terminate,	/* TERMINATE command was used */
-	session_error,		/* A (local) error occured */
-} SESSION_STATUS;
+typedef struct conn CONN;
+typedef CONN_STATUS (*conn_handler_t)(CONN *);
+typedef CONN_STATUS (*read_handler_t)(CONN *, char *, size_t);
 
-typedef struct conn {
-	int fd;
+struct conn {
+	struct conn *next, **pprev;
 
+	struct pollfd pfd;
+
+	conn_handler_t handler;
 	enum conn_status status;
 	const struct proto_command *lastcmd;
-
-	/* non-zero if terminating */
-	int terminate;
 
 	/* current input line */
 	struct getline line;
@@ -78,7 +77,31 @@ typedef struct conn {
 	/* buffer (e.g. for literals) */
 	char *buf;
 	size_t bufalloc;
-} CONN;
+
+	/* I/O progress */
+	char *iobuf;
+	size_t iotodo;
+
+	union {
+		struct {
+			read_handler_t handler;
+			unsigned long size;
+		} read;
+		struct {
+			struct syment *sp;
+			const char *modname;
+			int byname;
+		} symbol;
+	};
+};
+
+/* Connection state handlers */
+static CONN_STATUS finish_response(CONN *conn);
+static CONN_STATUS conn_readcommand(CONN *conn);
+static CONN_STATUS conn_getcommand(CONN *conn);
+static CONN_STATUS literal_data_raw(CONN *conn);
+static CONN_STATUS literal_data_done(CONN *conn);
+static CONN_STATUS send_symbol_data(CONN *conn);
 
 struct proto_command {
 	size_t len;
@@ -108,6 +131,13 @@ static const char crlf[2] = { '\r', '\n' };
 #ifndef offsetof
 #  define offsetof(TYPE, MEMBER) ((ulong)&((TYPE *)0)->MEMBER)
 #endif
+
+/* Linked list of open connexions */
+static struct conn *connections;
+static int nconnections;
+
+/* Non-zero if terminating */
+static int terminating;
 
 static void
 report_error(const char *fmt, ...)
@@ -149,7 +179,7 @@ conn_init(int fd)
 {
 	CONN *ret = calloc(1, sizeof(struct conn));
 	if (ret) {
-		ret->fd = fd;
+		ret->pfd.fd = fd;
 
 		/* Prepare the greeting message */
 		int n;
@@ -162,6 +192,18 @@ conn_init(int fd)
 		ret->resplen = n;
 		ret->respalloc = n + 1;
 		snprintf(ret->resp, ret->respalloc, GREET_FMT);
+
+		if (finish_response(ret) != conn_ok) {
+			free(ret);
+			return NULL;
+		}
+
+		ret->next = connections;
+		ret->pprev = &connections;
+		if (connections)
+			connections->pprev = &ret->next;
+		connections = ret;
+		++nconnections;
 	}
 	return ret;
 }
@@ -169,8 +211,13 @@ conn_init(int fd)
 static void
 conn_done(CONN *conn)
 {
-	if (conn->fd)
-		close(conn->fd);
+	--nconnections;
+	if (conn->next)
+		conn->next->pprev = conn->pprev;
+	*conn->pprev = conn->next;
+
+	if (conn->pfd.fd)
+		close(conn->pfd.fd);
 	if (conn->line.buf)
 		free(conn->line.buf);
 	if (conn->tag)
@@ -198,20 +245,18 @@ ensure_buffer(CONN *conn, size_t size)
 	return conn_ok;
 }
 
+static CONN_STATUS run_command(CONN *conn);
+
 static CONN_STATUS
-do_getcommand(CONN * conn)
+do_readcommand(CONN * conn)
 {
-	conn->gls = fdgetline(&conn->line, conn->fd);
-	switch (conn->gls) {
-	case GLS_AGAIN:
-		return conn_again;
-	case GLS_FINAL:
-	case GLS_EOF:
-		return conn_eof;
-	case GLS_ERROR:
+	conn->gls = fdgetline(&conn->line, conn->pfd.fd);
+	if (conn->gls < GLS_ONE) {
+		if (conn->gls == GLS_AGAIN)
+			return conn_ok;
+		if (conn->gls == GLS_EOF || conn->gls == GLS_FINAL)
+			return conn_eof;
 		return conn_fatal;
-	default:
-		break;
 	}
 
 	/* The protocol requires terminating lines with CRLF,
@@ -242,13 +287,23 @@ do_getcommand(CONN * conn)
 	conn->cmdend = conn->cmd + (endp - p);
 	conn->cmdp = conn->cmd;
 
-	return 0;
+	return run_command(conn);
+}
+
+static CONN_STATUS
+conn_readcommand(CONN *conn)
+{
+	if ( (conn->status = do_readcommand(conn)) != conn_ok)
+		conn->status = finish_response(conn);
+	return conn->status;
 }
 
 static CONN_STATUS
 conn_getcommand(CONN *conn)
 {
-	return conn->status = do_getcommand(conn);
+	conn->pfd.events = POLLIN;
+	conn->handler = conn_readcommand;
+	return conn_ok;
 }
 
 static CONN_STATUS
@@ -312,9 +367,9 @@ conn_respond(CONN *conn, int tagged)
 	memcpy(p, crlf, sizeof crlf);
 	p += sizeof crlf;
 
-	sz = p - conn->buf;
-	if (write(conn->fd, conn->buf, sz) != sz)
-		return conn_fatal;
+	conn->iobuf = conn->buf;
+	conn->iotodo = p - conn->buf;
+	conn->pfd.events = POLLOUT;
 
 	return conn_ok;
 }
@@ -324,6 +379,13 @@ set_response(CONN *conn, CONN_STATUS status, const char *msg)
 {
 	copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
 	return conn->status = status;
+}
+
+static CONN_STATUS
+finish_response(CONN *conn)
+{
+	conn->handler = conn_getcommand;
+	return conn_respond(conn, 1);
 }
 
 static CONN_STATUS
@@ -385,7 +447,7 @@ read_quoted(CONN *conn, char **string, size_t *len)
 }
 
 static CONN_STATUS
-read_literal(CONN *conn, char **string, size_t *len)
+read_literal(CONN *conn, read_handler_t handler)
 {
 	CONN_STATUS status;
 
@@ -398,7 +460,7 @@ read_literal(CONN *conn, char **string, size_t *len)
 	size_t numlen;
 	if ((status = read_number(conn, &num, &numlen)) != conn_ok)
 		return status;
-	unsigned long size = strtoul(num, &endnum, 10);
+	conn->read.size = strtoul(num, &endnum, 10);
 	if (endnum != conn->cmdp)
 		return set_response(conn, conn_bad, "Invalid literal");
 
@@ -406,38 +468,70 @@ read_literal(CONN *conn, char **string, size_t *len)
 		return set_response(conn, conn_bad, "Invalid literal");
 	++conn->cmdp;
 
-	static const char msg[] = "+ Ready for literal data\r\n";
-	if (write(conn->fd, msg, sizeof msg - 1) != sizeof msg - 1)
-		return conn_fatal;
+	if (ensure_buffer(conn, conn->read.size) != conn_ok)
+		return set_response(conn, conn_bad, strerror(errno));
 
-	enum getline_status gls;
-	do
-		gls = fdgetraw(&conn->line, size, conn->fd);
-	while (gls == GLS_AGAIN);
-	if (gls < GLS_ONE) {
-		const char *msg = gls == GLS_ERROR
-			? strerror(errno)
-			: "Unexpected EOF";
-		return set_response(conn, conn_fatal, msg);
-	}
+	static char msg[] = "+ Ready for literal data\r\n";
+	conn->iobuf = msg;
+	conn->iotodo = sizeof msg - 1;
+	conn->pfd.events = POLLOUT;
 
-	*string = conn->line.data;
-	*len = size;
+	conn->handler = literal_data_raw;
+	conn->read.handler = handler;
+
 	return conn_ok;
 }
 
 static CONN_STATUS
-read_astring(CONN *conn, char **string, size_t *len)
+literal_data_raw(CONN *conn)
+{
+	conn->iobuf = conn->buf;
+	conn->iotodo = conn->read.size;
+
+	size_t avl = getline_buffered(&conn->line);
+	if (avl >= conn->read.size)
+		avl = conn->read.size;
+	if (avl) {
+		conn->gls = fdgetraw(&conn->line, avl, conn->pfd.fd);
+		conn->iobuf += conn->line.len;
+		conn->iotodo -= conn->line.len;
+		if (conn->iotodo)
+			memcpy(conn->buf, conn->line.data, conn->line.len);
+	}
+	if (conn->iotodo)
+		conn->pfd.events = POLLIN;
+
+	conn->handler = literal_data_done;
+	return conn_ok;
+}
+
+static CONN_STATUS
+literal_data_done(CONN *conn)
+{
+	conn->handler = finish_response;
+	return conn->read.handler(conn, conn->buf, conn->read.size);
+}
+
+static CONN_STATUS
+read_astring(CONN *conn, read_handler_t handler)
 {
 	char *p = conn->cmdp;
+	CONN_STATUS status;
+	char *string;
+	size_t len;
+
 	if (p == conn->cmdend)
 		return conn_bad;
 	else if (*p == '\"')
-		return read_quoted(conn, string, len);
+		status = read_quoted(conn, &string, &len);
 	else if (*p == '{')
-		return read_literal(conn, string, len);
+		return read_literal(conn, handler);
 	else
-		return read_atom(conn, string, len);
+		status = read_atom(conn, &string, &len);
+
+	if (status != conn_ok)
+		return status;
+	return handler(conn, string, len);
 }
 
 static CONN_STATUS
@@ -509,39 +603,49 @@ get_syment_module(struct syment *sp)
 static CONN_STATUS
 send_symbol(CONN *conn, struct syment *sp, int byname)
 {
+	conn->symbol.sp = sp;
+	conn->symbol.modname = get_syment_module(sp);
+	conn->symbol.byname = byname;
+	conn->handler = send_symbol_data;
+	conn->pfd.events = 0;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_symbol_data(CONN *conn)
+{
+	struct syment *sp = conn->symbol.sp;
+	struct syment *nextsp = sp + 1;
+	const char *nextmod = get_syment_module(nextsp);
 	unsigned long addr = sp->value;
-	const char *modname = get_syment_module(sp);
+	unsigned long symsize = 0;
 	CONN_STATUS status;
 
-	do {
-		struct syment *nextsp = sp + 1;
-		const char *nextmod = get_syment_module(nextsp);
-		unsigned long symsize = 0;
+	if (nextmod)
+		symsize = nextsp->value - sp->value;
+	status = send_untagged(conn, conn_symbol,
+			       "%lx %lx %c \"%s\" \"%s\"",
+			       sp->value, symsize, sp->type,
+			       sp->name, conn->symbol.modname);
 
-		if (nextmod)
-			symsize = nextsp->value - sp->value;
-		status = send_untagged(conn, conn_symbol,
-				       "%lx %lx %c \"%s\" \"%s\"",
-				       sp->value, symsize, sp->type,
-				       sp->name, modname);
+	if (conn->symbol.byname) {
+		nextsp = symbol_search_next(sp->name, sp);
+		nextmod = nextsp ? get_syment_module(nextsp) : NULL;
+	} else if (nextsp->value != addr)
+		nextmod = NULL;
 
-		if (byname) {
-			nextsp = symbol_search_next(sp->name, sp);
-			nextmod = nextsp ? get_syment_module(nextsp) : NULL;
-		} else if (nextsp->value != addr)
-			nextmod = NULL;
-
-		sp = nextsp;
-		modname = nextmod;
-	} while (status == conn_ok && modname);
-
+	if (status == conn_ok && nextmod) {
+		conn->symbol.sp = nextsp;
+		conn->symbol.modname = nextmod;
+	} else
+		conn->handler = finish_response;
 	return status;
 }
 
 static CONN_STATUS
 disconnect(CONN *conn, const char *reason)
 {
-	if (shutdown(conn->fd, SHUT_RD))
+	if (shutdown(conn->pfd.fd, SHUT_RD))
 		return set_response(conn, conn_fatal, strerror(errno));
 
 	return send_untagged(conn, conn_bye, "%s", reason);
@@ -575,7 +679,7 @@ do_TERMINATE(CONN *conn)
 
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
 	if (status == conn_ok)
-		conn->terminate = 1;
+		terminating = 1;
 	return status;
 }
 
@@ -644,7 +748,7 @@ do_READMEM(CONN *conn)
 	status = send_untagged(conn, conn_dump, "%lx {%lu}",
 			       addr, (unsigned long) bytecnt);
 	if (status == conn_ok) {
-		size_t sz = write(conn->fd, buffer, bytecnt);
+		size_t sz = write(conn->pfd.fd, buffer, bytecnt);
 		if (sz != bytecnt)
 			status = conn_fatal;
 	}
@@ -653,18 +757,26 @@ do_READMEM(CONN *conn)
 	return status;
 }
 
+static CONN_STATUS SYMBOL_on_read(CONN *conn, char *tok, size_t len);
+
 static CONN_STATUS
 do_SYMBOL(CONN *conn)
 {
 	CONN_STATUS status;
-	char *tok;
-	size_t len;
 
 	/* Get the symbol name */
 	if ( (status = read_space(conn)) != conn_ok)
 		return status;
-	if ((status = read_astring(conn, &tok, &len)) != conn_ok)
-		return status;
+	return read_astring(conn, SYMBOL_on_read);
+}
+
+static CONN_STATUS
+SYMBOL_on_read(CONN *conn, char *tok, size_t len)
+{
+	CONN_STATUS status;
+
+	conn->handler = finish_response;
+
 	if ((status = ensure_buffer(conn, len + 1)) != conn_ok)
 		return set_response(conn, status, strerror(errno));
 	if (tok != conn->buf) {
@@ -707,34 +819,67 @@ do_ADDRESS(CONN *conn)
 	return send_symbol(conn, sp, 0);
 }
 
-static SESSION_STATUS
-run_session(int fd)
+static CONN_STATUS
+handle_rawio(CONN *conn, struct pollfd *pfd)
 {
-	CONN *conn;
-	CONN_STATUS status;
-	int terminate = 0;
-
-	if (! (conn = conn_init(fd)) )
-		return session_error;
-
-	do {
-		status = conn_respond(conn, 1);
-		if (status == conn_fatal)
-			break;
-
-		status = conn_getcommand(conn);
-		if (status == conn_ok)
-			status = run_command(conn);
-	} while (status != conn_fatal && status != conn_eof);
-
-	terminate = conn->terminate;
-	conn_done(conn);
-	if (status == conn_fatal)
-		return session_error;
-	else if (terminate)
-		return session_terminate;
+	ssize_t res;
+	if (pfd->revents & POLLIN)
+		res = read(pfd->fd, conn->iobuf, conn->iotodo);
+	else if (pfd->revents & POLLOUT)
+		res = write(pfd->fd, conn->iobuf, conn->iotodo);
 	else
-		return session_normal;
+		return conn_bad;
+
+	if (res < 0)
+		return conn_fatal;
+	if (!res)
+		return conn_eof;
+	conn->iobuf += res;
+	conn->iotodo -= res;
+	if (!conn->iotodo)
+		conn->pfd.events = 0;
+
+	return conn_ok;
+}
+
+static CONN_STATUS
+handle_conn(CONN *conn, struct pollfd *pfd)
+{
+	CONN_STATUS status;
+
+	if (pfd->revents & (POLLERR|POLLNVAL))
+		status = conn_fatal;
+	else if (pfd->revents & POLLHUP)
+		status = conn_eof;
+	else if (conn->iotodo)
+		status = handle_rawio(conn, pfd);
+	else
+		status = conn->handler(conn);
+
+	while (status == conn_ok && !conn->pfd.events)
+		status = conn->handler(conn);
+
+	if (status == conn_fatal || status == conn_eof)
+		conn_done(conn);
+
+	return conn_ok;
+}
+
+static int
+handle_accept(struct pollfd *pfd)
+{
+	int sessfd = accept(pfd->fd, NULL, NULL);
+	CONN *newconn;
+
+	if (sessfd < 0) {
+		report_error("Connection failed");
+		return -1;
+	}
+	if (! (newconn = conn_init(sessfd)) ) {
+		report_error("Connection init failed");
+		return -1;
+	}
+	return 0;
 }
 
 static int
@@ -742,7 +887,9 @@ run_server(const char *path)
 {
 	size_t sz = offsetof(struct sockaddr_un, sun_path) + strlen(path) + 1;
 	struct sockaddr_un *sun;
-	int fd, sessfd;
+	struct pollfd *fds = NULL;
+	CONN *conn;
+	int fd;
 	int ret = -1;
 	int i;
 
@@ -776,19 +923,52 @@ run_server(const char *path)
 		goto err_unlink;
 	}
 
-	while ( (sessfd = accept(fd, NULL, NULL)) >= 0) {
-		SESSION_STATUS status = run_session(sessfd);
-		if (status == session_terminate) {
-			ret = 0;
-			break;
+	terminating = 0;
+	while (!terminating) {
+		int nfds = nconnections + 1;
+		if ( !(fds = realloc(fds, nfds * sizeof(struct pollfd))) ) {
+			report_error("Cannot allocate poll FDs");
+			goto err_unlink;
+		}
+
+		struct pollfd *pfd = fds;
+		for (conn = connections; conn; conn = conn->next)
+			*pfd++ = conn->pfd;
+		pfd->fd = fd;
+		pfd->events = POLLIN;
+
+		int todo = poll(fds, nfds, -1);
+		if (todo < 0) {
+			report_error("Poll failed");
+			goto err_unlink;
+		}
+
+		conn = connections;
+		for (pfd = fds; todo; ++pfd) {
+			CONN *nconn = conn ? conn->next : NULL;
+			if (pfd->revents) {
+				--todo;
+				if (conn)
+					handle_conn(conn, pfd);
+				else
+					handle_accept(pfd);
+			}
+			conn = nconn;
 		}
 	}
+
+	ret = 0;
 
  err_unlink:
 	unlink(path);
  err_close:
 	close(fd);
  err:
+	while (connections)
+		conn_done(connections);
+	if (fds)
+		free(fds);
+
 	return ret;
 }
 
