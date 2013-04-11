@@ -445,7 +445,7 @@ conn_getcommand(CONN *conn)
 }
 
 static CONN_STATUS
-conn_respond(CONN *conn, int tagged)
+conn_respond(CONN *conn, int tagged, CONN_COND cond)
 {
 	static const char *const msg_cond[] = {
 		[cond_ok] =     "OK",
@@ -460,14 +460,14 @@ conn_respond(CONN *conn, int tagged)
 
 	size_t taglen = tagged ? conn->taglen : 0;
 
-	const char *cond =
-		(conn->cond < sizeof(msg_cond)/sizeof(msg_cond[0]))
-		? msg_cond[conn->cond]
+	const char *condstr =
+		(cond < sizeof(msg_cond)/sizeof(msg_cond[0]))
+		? msg_cond[cond]
 		: msg_cond[cond_bad];
 
 	size_t sz = (taglen ?: 1)	/* tag or "*" */
 		+ 1			/* SP */
-		+ strlen(cond)		/* condition code */
+		+ strlen(condstr)	/* condition code */
 		+ 1			/* SP */
 		+ (conn->resplen ?:	/* custom response, or */
 		   (conn->lastcmd ?
@@ -489,7 +489,7 @@ conn_respond(CONN *conn, int tagged)
 		*p++ = '*';
 
 	*p++ = ' ';
-	p = stpcpy(p, cond);
+	p = stpcpy(p, condstr);
 	*p++ = ' ';
 
 	if (conn->resplen) {
@@ -498,9 +498,7 @@ conn_respond(CONN *conn, int tagged)
 		conn->resplen = 0;
 	} else if (conn->lastcmd) {
 		p = stpcpy(p, conn->lastcmd->name);
-		p = stpcpy(p, (conn->cond == cond_ok
-			       ? msg_completed
-			       : msg_failed));
+		p = stpcpy(p, cond == cond_ok ? msg_completed : msg_failed);
 	}
 	if (tagged)
 		conn->lastcmd = NULL;
@@ -519,7 +517,7 @@ static CONN_STATUS
 finish_response(CONN *conn)
 {
 	conn->handler = conn_getcommand;
-	return conn_respond(conn, 1);
+	return conn_respond(conn, 1, conn->cond);
 }
 
 static CONN_STATUS
@@ -708,11 +706,9 @@ send_untagged(CONN *conn, CONN_COND cond, const char *fmt, ...)
 		va_end(ap);
 	}
 
-	CONN_COND oldcond = conn->cond;
-	set_response(conn, cond, conn->buf);
-	CONN_STATUS status = conn_respond(conn, 0);
-	conn->cond = (status == conn_error) ? cond_bad : oldcond;
-	return status;
+	if (copy_string(&conn->resp, &conn->resplen, conn->buf, n) != conn_ok)
+		return conn_error;
+	return conn_respond(conn, 0, cond);
 }
 
 /* This function returns NULL if sp is invalid */
