@@ -364,6 +364,16 @@ disconnect(CONN *conn)
 	}
 }
 
+static void
+terminate()
+{
+	CONN *conn;
+	for (conn = connections; conn; conn = conn->next)
+		if (conn->term_state == conn_running)
+			conn->term_state = conn_bye_pending;
+	server_destroyall();
+}
+
 static int
 check_bye(CONN *conn)
 {
@@ -842,11 +852,7 @@ do_TERMINATE(CONN *conn)
 	if (conn->cmdp < conn->cmdend)
 		return too_many_args(conn);
 
-	for (conn = connections; conn; conn = conn->next)
-		if (conn->term_state == conn_running)
-			conn->term_state = conn_bye_pending;
-	server_destroyall();
-
+	terminate();
 	return conn_ok;
 }
 
@@ -1055,6 +1061,20 @@ handle_accept(struct pollfd *pfd)
 }
 
 static int
+handle_sigint(void)
+{
+	if (received_SIGINT()) {
+		if (!nservers) {
+			fputs("guiserver: FORCE terminate\n", fp);
+			return 1;
+		}
+		fputs("guiserver: terminating client connections\n", fp);
+		terminate();
+	}
+	return 0;
+}
+
+static int
 run_server_loop(struct pollfd **pfds)
 {
 	SERVER *srv;
@@ -1080,6 +1100,11 @@ run_server_loop(struct pollfd **pfds)
 
 		int todo = poll(*pfds, nfds, -1);
 		if (todo < 0) {
+			if (errno == EINTR) {
+				if (handle_sigint())
+					break;
+				continue;
+			}
 			report_error("Poll failed");
 			return -1;
 		}
