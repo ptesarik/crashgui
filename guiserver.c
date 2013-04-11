@@ -1098,7 +1098,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 }
 
 static int
-handle_accept(struct pollfd *pfd)
+handle_srv(SERVER *srv, struct pollfd *pfd)
 {
 	int sessfd = accept(pfd->fd, NULL, NULL);
 	CONN *newconn;
@@ -1112,6 +1112,36 @@ handle_accept(struct pollfd *pfd)
 		return -1;
 	}
 	return 0;
+}
+
+static void
+handle_events(struct pollfd *pfds, int todo)
+{
+	struct pollfd *pfd = pfds;
+
+	/* Check all connections */
+	CONN *conn = connections;
+	while (conn && todo) {
+		CONN *nconn = conn->next;
+		if (pfd->revents) {
+			--todo;
+			handle_conn(conn, pfd);
+		}
+		++pfd;
+		conn = nconn;
+	}
+
+	/* Check all servers */
+	SERVER *srv = servers;
+	while (srv && todo) {
+		SERVER *nsrv = srv->next;
+		if (pfd->revents) {
+			--todo;
+			handle_srv(srv, pfd);
+		}
+		++pfd;
+		srv = nsrv;
+	}
 }
 
 static int
@@ -1163,18 +1193,7 @@ run_server_loop(struct pollfd **pfds)
 			return -1;
 		}
 
-		conn = connections;
-		for (pfd = *pfds; todo; ++pfd) {
-			CONN *nconn = conn ? conn->next : NULL;
-			if (pfd->revents) {
-				--todo;
-				if (conn)
-					handle_conn(conn, pfd);
-				else
-					handle_accept(pfd);
-			}
-			conn = nconn;
-		}
+		handle_events(*pfds, todo);
 	}
 
 	return 0;
