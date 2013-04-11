@@ -411,21 +411,20 @@ conn_readcommand(CONN * conn)
 	if (length > 0 && conn->line.data[length-1] == '\r')
 		--length;
 
-	conn->taglen = 0;
 	char *p = conn->line.data, *endp = p + length;
 	while (p != endp && *p != ' ')
 		++p;
-	if (p == conn->line.data)
-		return set_response(conn, cond_bad, "Missing tag");
-	if (p == endp)
-		return set_response(conn, cond_bad, "Missing command");
 	conn->taglen = p - conn->line.data;
-
+	if (!conn->taglen)
+		return set_response(conn, cond_bad, "Missing tag");
 	if (!copy_string(&conn->tag, &conn->tagalloc,
-			 conn->line.data, p - conn->line.data)) {
+			 conn->line.data, conn->taglen)) {
 		conn->taglen = 0;
 		return conn_error;
 	}
+
+	if (p == endp)
+		return set_response(conn, cond_bad, "Missing command");
 	++p;
 
 	if (!copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p))
