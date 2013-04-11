@@ -534,16 +534,29 @@ read_space(CONN *conn)
 }
 
 static CONN_STATUS
-read_number(CONN *conn, char **num, size_t *numlen)
+convert_num(const char *numstr, size_t len, unsigned long *pnum, int base)
+{
+	char tmpnum[len+1], *endnum;
+
+	memcpy(tmpnum, numstr, len);
+	tmpnum[len] = 0;
+	*pnum = strtoul(tmpnum, &endnum, base);
+	return *endnum == '\0' ? conn_ok : conn_error;
+}
+
+static CONN_STATUS
+read_number(CONN *conn, unsigned long *pnum)
 {
 	char *p = conn->cmdp;
 	while (p != conn->cmdend && isdigit(*p))
 		++p;
 
-	*num = conn->cmdp;
-	*numlen = p - conn->cmdp;
+	if (p == conn->cmdp)
+		return conn_error;
+
+	size_t numlen = p - conn->cmdp;
 	conn->cmdp = p;
-	return *numlen ? conn_ok : conn_error;
+	return convert_num(p - numlen, numlen, pnum, 10);
 }
 
 static CONN_STATUS
@@ -591,13 +604,7 @@ read_literal(CONN *conn, read_handler_t handler)
 		return set_response(conn, cond_bad, "Literal expected");
 	++conn->cmdp;
 
-	/* Read the number of bytes */
-	char *num, *endnum;
-	size_t numlen;
-	if ((status = read_number(conn, &num, &numlen)) != conn_ok)
-		return status;
-	conn->read.size = strtoul(num, &endnum, 10);
-	if (endnum != conn->cmdp)
+	if ((status = read_number(conn, &conn->read.size)) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid literal");
 
 	if (conn->cmdp + 1 != conn->cmdend || *conn->cmdp != '}')
@@ -815,26 +822,23 @@ do_TERMINATE(CONN *conn)
 static CONN_STATUS
 do_READMEM(CONN *conn)
 {
-	char *tok, *endnum;
+	char *tok;
 	size_t len;
 	CONN_STATUS status;
 
 	/* Get starting address */
+	unsigned long addr;
 	if ( (status = read_space(conn)) != conn_ok)
 		return set_response(conn, cond_bad, "Missing space");
-	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-		return set_response(conn, cond_bad, "Invalid atom");
-	unsigned long addr = strtoul(tok, &endnum, 16);
-	if (endnum != conn->cmdp)
+	if (read_atom(conn, &tok, &len) != conn_ok ||
+	    convert_num(tok, len, &addr, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
 	if ( (status = read_space(conn)) != conn_ok)
 		return status;
-	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-		return status;
-	conn->readmem.bytecnt = strtoul(tok, &endnum, 16);
-	if (endnum != conn->cmdp)
+	if (read_atom(conn, &tok, &len) != conn_ok ||
+	    convert_num(tok, len, &conn->readmem.bytecnt, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
@@ -937,16 +941,15 @@ static CONN_STATUS
 do_ADDRESS(CONN *conn)
 {
 	CONN_STATUS status;
-	char *tok, *endnum;
+	char *tok;
 	size_t len;
 
 	/* Get the address */
+	unsigned long addr;
 	if ( (status = read_space(conn)) != conn_ok)
 		return status;
-	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-		return status;
-	unsigned long addr = strtoul(tok, &endnum, 16);
-	if (endnum != conn->cmdp)
+	if (read_atom(conn, &tok, &len) != conn_ok ||
+	    convert_num(tok, len, &addr, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid address");
 
 	if (conn->cmdp != conn->cmdend)
