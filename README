@@ -124,6 +124,43 @@ Commands
                S: * SYMBOL c07070a0 c0 R "linux_banner"
                S: A027 OK ADDRESS completed
 
+* PID command
+
+   Arguments:  process ID
+
+   Responses:  REQUIRED untagged responses: TASK
+
+   Result:     OK - task(s) with a given PID described
+               NO - the specified PID was not found
+               BAD - command unknown or arguments invalid
+
+      The PID command searches the process list for the given PID and
+      sends back the corresponding TASK objects. The PID is interpreted
+      as a decimal unsigned integer.
+
+   Example:    C: A028 PID 1
+               S: * TASK f4876ce0 f4878000 1 "systemd" 1 c0a59060 f419ec40
+               S: A028 OK PID completed
+
+Responses
+---------
+
+* TASK response
+
+   Contents:   address of struct task_struct (hexadecimal)
+               address of struct thread_info (hexadecimal)
+               PID (decimal)
+               command name (string)
+               processor number (decimal)
+               address of parent struct task_struct (hexadecimal)
+               address of struct mm_struct (hexadecimal)
+
+      The TASK response occurs as a result of a PID command.
+      It returns the description of a single task with a given PID. There
+      can be multiple TASK responses for a single PID command.
+
+   Example:    S: * TASK f491cfa0 f491e000 22 "netns" 1 f4876030 0
+
 Authentication
 --------------
 There is no authentication. The crashgui protocol is designed to operate

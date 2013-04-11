@@ -49,7 +49,7 @@ typedef enum conn_cond {
 	cond_bye,
 	cond_dump,
 	cond_symbol,
-
+	cond_task,
 } CONN_COND;
 
 typedef struct conn CONN;
@@ -115,6 +115,9 @@ struct conn {
 			const char *modname;
 			int byname;
 		} symbol;
+		struct {
+			struct task_context *tc;
+		} task;
 	};
 };
 
@@ -125,6 +128,7 @@ static CONN_STATUS conn_getcommand(CONN *conn);
 static CONN_STATUS literal_data_raw(CONN *conn);
 static CONN_STATUS literal_data_done(CONN *conn);
 static CONN_STATUS send_symbol_data(CONN *conn);
+static CONN_STATUS send_task_data(CONN *conn);
 static CONN_STATUS READMEM_size_sent(CONN *conn);
 static CONN_STATUS READMEM_done(CONN *conn);
 
@@ -139,6 +143,7 @@ static CONN_STATUS do_TERMINATE(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
 static CONN_STATUS do_SYMBOL(CONN *conn);
 static CONN_STATUS do_ADDRESS(CONN *conn);
+static CONN_STATUS do_PID(CONN *conn);
 
 #define DEFINE_CMD(name)	{ (sizeof(#name) - 1), (#name), (do_ ## name) }
 
@@ -148,6 +153,7 @@ static const struct proto_command cmds[] = {
 	DEFINE_CMD(READMEM),
 	DEFINE_CMD(SYMBOL),
 	DEFINE_CMD(ADDRESS),
+	DEFINE_CMD(PID),
 	{ 0, NULL }
 };
 
@@ -485,6 +491,7 @@ conn_respond(CONN *conn, int tagged, CONN_COND cond)
 		[cond_bye] =    "BYE",
 		[cond_dump] =   "DUMP",
 		[cond_symbol] = "SYMBOL",
+		[cond_task] =   "TASK",
 	};
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
@@ -826,6 +833,33 @@ send_symbol_data(CONN *conn)
 }
 
 static CONN_STATUS
+send_task(CONN *conn, struct task_context *tc)
+{
+	conn->task.tc = tc;
+	conn->handler = send_task_data;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_task_data(CONN *conn)
+{
+	struct task_context *tc = conn->task.tc;
+	CONN_STATUS status;
+
+	status = send_untagged(conn, cond_task,
+			       "%lx %lx %lu \"%s\" %d %lx %lx",
+			       tc->task, tc->thread_info, tc->pid,
+			       tc->comm, tc->processor,
+			       tc->ptask, tc->mm_struct);
+
+	if (status == conn_ok && tc->tc_next)
+		conn->task.tc = tc->tc_next;
+	else
+		conn->handler = finish_response;
+	return status;
+}
+
+static CONN_STATUS
 too_many_args(CONN *conn)
 {
 	char *p = conn->cmdp;
@@ -995,6 +1029,26 @@ do_ADDRESS(CONN *conn)
 		return set_response(conn, cond_no, "Symbol not found");
 
 	return send_symbol(conn, sp, 0);
+}
+
+static CONN_STATUS
+do_PID(CONN *conn)
+{
+	/* Get the address */
+	unsigned long pid;
+	if (read_space(conn))
+		return conn_ok;
+	if (read_number(conn, &pid))
+		return set_response(conn, cond_bad, "Invalid PID");
+
+	if (conn->cmdp != conn->cmdend)
+		return too_many_args(conn);
+
+	struct task_context *tc = pid_to_context(pid);
+	if (!tc)
+		return set_response(conn, cond_no, "PID not found");
+
+	return send_task(conn, tc);
 }
 
 static CONN_STATUS
