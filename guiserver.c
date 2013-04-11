@@ -308,20 +308,22 @@ conn_getcommand(CONN *conn)
 static CONN_STATUS
 conn_respond(CONN *conn, int tagged)
 {
+	static const char *const msg_cond[] = {
+		[conn_ok] =     "OK",
+		[conn_no] =     "NO",
+		[conn_bad] =    "BAD",
+		[conn_bye] =    "BYE",
+		[conn_dump] =   "DUMP",
+		[conn_symbol] = "SYMBOL",
+	};
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
 	size_t taglen = tagged ? conn->taglen : 0;
-	const char *cond;
 
-	switch (conn->status) {
-	case conn_ok:	cond = "OK";  break;
-	case conn_no:	cond = "NO";  break;
-	case conn_bye:	cond = "BYE"; break;
-	case conn_dump:	cond = "DUMP"; break;
-	case conn_symbol: cond = "SYMBOL"; break;
-	case conn_bad:
-	default:	cond = "BAD"; break;
-	}
+	const char *cond =
+		(conn->status < sizeof(msg_cond)/sizeof(msg_cond[0]))
+		? msg_cond[conn->status]
+		: msg_cond[conn_bad];
 
 	size_t sz = (taglen ?: 1)	/* tag or "*" */
 		+ 1			/* SP */
