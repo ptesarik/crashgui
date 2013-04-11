@@ -372,18 +372,18 @@ check_bye(CONN *conn)
 	return 0;
 }
 
-static CONN_STATUS
+static int
 ensure_buffer(CONN *conn, size_t size)
 {
 	if (size <= conn->bufalloc)
-		return conn_ok;
+		return 0;
 
 	char *newbuf = realloc(conn->buf, size);
 	if (!newbuf)
-		return conn_error;
+		return -1;
 	conn->buf = newbuf;
 	conn->bufalloc = size;
-	return conn_ok;
+	return 0;
 }
 
 static CONN_STATUS
@@ -483,7 +483,7 @@ conn_respond(CONN *conn, int tagged, CONN_COND cond)
 		    : 0))		/* or nothing */
 		+ 2;			/* CRLF */
 
-	if (ensure_buffer(conn, sz + 1) != conn_ok)
+	if (ensure_buffer(conn, sz + 1))
 		return conn_error;
 
 	char *p = conn->buf;
@@ -613,7 +613,7 @@ read_literal(CONN *conn, read_handler_t handler)
 		return set_response(conn, cond_bad, "Invalid literal");
 	++conn->cmdp;
 
-	if (ensure_buffer(conn, conn->read.size) != conn_ok)
+	if (ensure_buffer(conn, conn->read.size))
 		return set_response(conn, cond_bad, strerror(errno));
 
 	static char msg[] = "+ Ready for literal data\r\n";
@@ -712,7 +712,7 @@ send_untagged(CONN *conn, CONN_COND cond, const char *fmt, ...)
 	va_end(ap);
 
 	if (n >= conn->bufalloc) {
-		if (ensure_buffer(conn, n + 1) != conn_ok)
+		if (ensure_buffer(conn, n + 1))
 			return set_response(conn, cond_bad, strerror(errno));
 		va_start(ap, fmt);
 		vsnprintf(conn->buf, conn->bufalloc, fmt, ap);
@@ -922,9 +922,7 @@ do_SYMBOL(CONN *conn)
 static CONN_STATUS
 SYMBOL_on_read(CONN *conn, char *tok, size_t len)
 {
-	CONN_STATUS status;
-
-	if ((status = ensure_buffer(conn, len + 1)) != conn_ok)
+	if (ensure_buffer(conn, len + 1))
 		return set_response(conn, cond_bad, strerror(errno));
 	if (tok != conn->buf) {
 		memcpy(conn->buf, tok, len);
