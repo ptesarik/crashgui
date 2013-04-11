@@ -177,6 +177,17 @@ report_error(const char *fmt, ...)
 }
 
 static int
+set_nonblock(int fd)
+{
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags == -1)
+                return -1;
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+		return -1;
+        return 0;
+}
+
+static int
 copy_string(char **pdst, size_t *pdstalloc,
 	    const char *src, size_t srclen)
 {
@@ -227,6 +238,8 @@ server_init(const char *path)
 		report_error("Cannot create socket");
 		goto err;
 	}
+
+	set_nonblock(ret->pfd.fd); /* error is not critical */
 
 	ret->sun.sun_family = AF_UNIX;
 	strcpy(ret->sun.sun_path, path);
@@ -281,6 +294,8 @@ conn_init(int fd)
 {
 	CONN *ret = calloc(1, sizeof(struct conn));
 	if (ret) {
+		set_nonblock(fd); /* error is not critical */
+
 		ret->pfd.fd = fd;
 
 		/* Prepare the greeting message */
