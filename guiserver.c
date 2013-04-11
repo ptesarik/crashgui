@@ -298,7 +298,7 @@ conn_done(CONN *conn)
 		conn->next->pprev = conn->pprev;
 	*conn->pprev = conn->next;
 
-	if (conn->pfd.fd)
+	if (conn->pfd.fd >= 0)
 		close(conn->pfd.fd);
 	if (conn->line.buf)
 		free(conn->line.buf);
