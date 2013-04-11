@@ -1339,4 +1339,6 @@ guiserver_init(void)
 void __attribute__((destructor))
 guiserver_fini(void)
 {
+	server_destroyall();
+	conn_destroyall();
 }
