@@ -347,6 +347,8 @@ do_readcommand(CONN * conn)
 			return conn_eof;
 		return conn_fatal;
 	}
+	conn->pfd.events = 0;
+	conn->handler = finish_response;
 
 	/* The protocol requires terminating lines with CRLF,
 	 * but we're lenient on what we accept and also allow LF.
@@ -382,9 +384,7 @@ do_readcommand(CONN * conn)
 static CONN_STATUS
 conn_readcommand(CONN *conn)
 {
-	if ( (conn->status = do_readcommand(conn)) != conn_ok)
-		conn->status = finish_response(conn);
-	return conn->status;
+	return conn->status = do_readcommand(conn);
 }
 
 static CONN_STATUS
