@@ -29,19 +29,9 @@ QMemView::QMemView(QWidget *parent) :
 
 //    vsb.setRange(0, 0x7FFFFFFF);
     vsb.setVisible(true);
-    if (addr != 0)
-    {
-        curScroll = 50;
-    }
-    else
-    {
-        curScroll = 0;
-    }
     // TBD: Need to do an end of memory detection for end of scroll-bar
 
     QObject::connect(&vsb, SIGNAL(valueChanged(int)), this, SLOT(scrolled(int)));
-
-    vsb.setValue(curScroll);
 }
 
 int QMemView::getPreferredSizeInfo()
@@ -332,6 +322,16 @@ void QMemView::do_refresh()
     QString readAddrStr = QString::number(addr, 10);
     unsigned long long readAddr;
     bool ok;
+
+    if (addr != 0)
+    {
+        curScroll = 50;
+    }
+    else
+    {
+        curScroll = 0;
+    }
+    vsb.setValue(curScroll);
 
     currentView = mainWindow->readMemory(readAddrStr, 4096);
 
