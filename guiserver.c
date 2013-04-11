@@ -43,12 +43,12 @@ typedef enum conn_status {
 } CONN_STATUS;
 
 typedef enum conn_cond {
-	cond_ok,		/* OK */
-	cond_bad,		/* Malformed command */
-	cond_no,		/* NO response */
-	cond_bye,		/* Connection terminating */
-	cond_dump,		/* DUMP response */
-	cond_symbol,		/* SYMBOL response */
+	cond_ok,
+	cond_bad,
+	cond_no,
+	cond_bye,
+	cond_dump,
+	cond_symbol,
 
 } CONN_COND;
 
@@ -526,16 +526,16 @@ finish_response(CONN *conn)
 	return conn_respond(conn, 1, conn->cond);
 }
 
-static CONN_STATUS
+static int
 read_space(CONN *conn)
 {
 	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ')
-		return conn_error;
+		return -1;
 	++conn->cmdp;
-	return conn_ok;
+	return 0;
 }
 
-static CONN_STATUS
+static int
 convert_num(const char *numstr, size_t len, unsigned long *pnum, int base)
 {
 	char tmpnum[len+1], *endnum;
@@ -543,10 +543,10 @@ convert_num(const char *numstr, size_t len, unsigned long *pnum, int base)
 	memcpy(tmpnum, numstr, len);
 	tmpnum[len] = 0;
 	*pnum = strtoul(tmpnum, &endnum, base);
-	return *endnum == '\0' ? conn_ok : conn_error;
+	return *endnum == '\0' ? 0 : -1;
 }
 
-static CONN_STATUS
+static int
 read_number(CONN *conn, unsigned long *pnum)
 {
 	char *p = conn->cmdp;
@@ -554,14 +554,14 @@ read_number(CONN *conn, unsigned long *pnum)
 		++p;
 
 	if (p == conn->cmdp)
-		return conn_error;
+		return -1;
 
 	size_t numlen = p - conn->cmdp;
 	conn->cmdp = p;
 	return convert_num(p - numlen, numlen, pnum, 10);
 }
 
-static CONN_STATUS
+static int
 read_atom(CONN *conn, char **atom, size_t *atomlen)
 {
 	char *p = conn->cmdp;
@@ -571,15 +571,17 @@ read_atom(CONN *conn, char **atom, size_t *atomlen)
 	*atom = conn->cmdp;
 	*atomlen = p - conn->cmdp;
 	conn->cmdp = p;
-	return *atomlen ? conn_ok : conn_error;
+	return *atomlen ? 0 : -1;
 }
 
-static CONN_STATUS
+static int
 read_quoted(CONN *conn, char **string, size_t *len)
 {
 	char *p = conn->cmdp, *q;
-	if (p == conn->cmdend || *p != '\"')
-		return set_response(conn, cond_bad, "Quoted string expected");
+	if (p == conn->cmdend || *p != '\"') {
+		set_response(conn, cond_bad, "Quoted string expected");
+		return -1;
+	}
 
 	*string = q = ++p;
 	while (p != conn->cmdend && *p != '\"') {
@@ -589,32 +591,40 @@ read_quoted(CONN *conn, char **string, size_t *len)
 		*q++ = *p++;
 	}
 
-	if (p == conn->cmdend || *p != '\"')
-		return set_response(conn, cond_bad, "Invalid quoted string");
+	if (p == conn->cmdend || *p != '\"') {
+		set_response(conn, cond_bad, "Invalid quoted string");
+		return -1;
+	}
 	conn->cmdp = ++p;
 
 	*len = q - *string;
-	return conn_ok;
+	return 0;
 }
 
-static CONN_STATUS
+static int
 read_literal(CONN *conn, read_handler_t handler)
 {
-	CONN_STATUS status;
-
-	if (conn->cmdp == conn->cmdend || *conn->cmdp != '{')
-		return set_response(conn, cond_bad, "Literal expected");
+	if (conn->cmdp == conn->cmdend || *conn->cmdp != '{') {
+		set_response(conn, cond_bad, "Literal expected");
+		return -1;
+	}
 	++conn->cmdp;
 
-	if ((status = read_number(conn, &conn->read.size)) != conn_ok)
-		return set_response(conn, cond_bad, "Invalid literal");
+	if (read_number(conn, &conn->read.size)) {
+		set_response(conn, cond_bad, "Invalid literal");
+		return -1;
+	}
 
-	if (conn->cmdp + 1 != conn->cmdend || *conn->cmdp != '}')
-		return set_response(conn, cond_bad, "Invalid literal");
+	if (conn->cmdp + 1 != conn->cmdend || *conn->cmdp != '}') {
+		set_response(conn, cond_bad, "Invalid literal");
+		return -1;
+	}
 	++conn->cmdp;
 
-	if (ensure_buffer(conn, conn->read.size))
-		return set_response(conn, cond_bad, strerror(errno));
+	if (ensure_buffer(conn, conn->read.size)) {
+		set_response(conn, cond_bad, strerror(errno));
+		return -1;
+	}
 
 	static char msg[] = "+ Ready for literal data\r\n";
 	conn->iobuf = msg;
@@ -624,7 +634,7 @@ read_literal(CONN *conn, read_handler_t handler)
 	conn->handler = literal_data_raw;
 	conn->read.handler = handler;
 
-	return conn_ok;
+	return 0;
 }
 
 static CONN_STATUS
@@ -657,26 +667,24 @@ literal_data_done(CONN *conn)
 	return conn->read.handler(conn, conn->buf, conn->read.size);
 }
 
-static CONN_STATUS
+static int
 read_astring(CONN *conn, read_handler_t handler)
 {
 	char *p = conn->cmdp;
-	CONN_STATUS status;
 	char *string;
 	size_t len;
+	int ret;
 
 	if (p == conn->cmdend)
-		return conn_error;
+		return -1;
 	else if (*p == '\"')
-		status = read_quoted(conn, &string, &len);
+		ret = read_quoted(conn, &string, &len);
 	else if (*p == '{')
 		return read_literal(conn, handler);
 	else
-		status = read_atom(conn, &string, &len);
+		ret = read_atom(conn, &string, &len);
 
-	if (status != conn_ok)
-		return status;
-	return handler(conn, string, len);
+	return ret ?: handler(conn, string, len);
 }
 
 static CONN_STATUS
@@ -685,7 +693,7 @@ run_command(CONN *conn)
 	char *cmd;
 	size_t len;
 
-	if (read_atom(conn, &cmd, &len) != conn_ok)
+	if (read_atom(conn, &cmd, &len))
 		return set_response(conn, cond_bad, "Command expected");
 	toupper_string(cmd, len);
 
@@ -828,25 +836,25 @@ do_READMEM(CONN *conn)
 
 	/* Get starting address */
 	unsigned long addr;
-	if (read_space(conn) != conn_ok)
+	if (read_space(conn))
 		return set_response(conn, cond_bad, "Space expected");
-	if (read_atom(conn, &tok, &len) != conn_ok ||
-	    convert_num(tok, len, &addr, 16) != conn_ok)
+	if (read_atom(conn, &tok, &len) ||
+	    convert_num(tok, len, &addr, 16))
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
-	if (read_space(conn) != conn_ok)
+	if (read_space(conn))
 		return set_response(conn, cond_bad, "Space expected");
-	if (read_atom(conn, &tok, &len) != conn_ok ||
-	    convert_num(tok, len, &conn->readmem.bytecnt, 16) != conn_ok)
+	if (read_atom(conn, &tok, &len) ||
+	    convert_num(tok, len, &conn->readmem.bytecnt, 16))
 		return set_response(conn, cond_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
 	int memtype = KVADDR;
 	if (conn->cmdp != conn->cmdend) {
-		if (read_space(conn) != conn_ok)
+		if (read_space(conn))
 			return set_response(conn, cond_bad, "Space expected");
-		if (read_atom(conn, &tok, &len) != conn_ok)
+		if (read_atom(conn, &tok, &len))
 			return set_response(conn, cond_bad,
 					    "Invalid memory type");
 		toupper_string(tok, len);
@@ -911,9 +919,11 @@ static CONN_STATUS
 do_SYMBOL(CONN *conn)
 {
 	/* Get the symbol name */
-	if (read_space(conn) != conn_ok)
+	if (read_space(conn))
 		return set_response(conn, cond_bad, "Space expected");
-	return read_astring(conn, SYMBOL_on_read);
+	if (read_astring(conn, SYMBOL_on_read))
+		return set_response(conn, cond_bad, "Invalid symbol name");
+	return conn_ok;
 }
 
 static CONN_STATUS
@@ -942,10 +952,10 @@ do_ADDRESS(CONN *conn)
 
 	/* Get the address */
 	unsigned long addr;
-	if (read_space(conn) != conn_ok)
+	if (read_space(conn))
 		return set_response(conn, cond_bad, "Space expected");
-	if (read_atom(conn, &tok, &len) != conn_ok ||
-	    convert_num(tok, len, &addr, 16) != conn_ok)
+	if (read_atom(conn, &tok, &len) ||
+	    convert_num(tok, len, &addr, 16))
 		return set_response(conn, cond_bad, "Invalid address");
 
 	if (conn->cmdp != conn->cmdend)
