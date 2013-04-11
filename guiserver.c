@@ -61,6 +61,12 @@ struct conn {
 	enum conn_status status;
 	const struct proto_command *lastcmd;
 
+	enum {
+		conn_running,
+		conn_bye_pending,
+		conn_bye_sent
+	} term_state;
+
 	/* current input line */
 	struct getline line;
 	enum getline_status gls;
@@ -90,6 +96,10 @@ struct conn {
 
 	union {
 		struct {
+			conn_handler_t handler;
+			int tagged;
+		} terminate;
+		struct {
 			read_handler_t handler;
 			unsigned long size;
 		} read;
@@ -102,6 +112,7 @@ struct conn {
 };
 
 /* Connection state handlers */
+static CONN_STATUS resume_after_bye(CONN *conn);
 static CONN_STATUS finish_response(CONN *conn);
 static CONN_STATUS conn_readcommand(CONN *conn);
 static CONN_STATUS conn_getcommand(CONN *conn);
@@ -320,6 +331,15 @@ conn_destroyall(void)
 		conn_done(connections);
 }
 
+static void
+disconnect(CONN *conn)
+{
+	if (shutdown(conn->pfd.fd, SHUT_RD)) {
+		close(conn->pfd.fd);
+		conn->pfd.fd = -1;
+	}
+}
+
 static CONN_STATUS
 ensure_buffer(CONN *conn, size_t size)
 {
@@ -408,6 +428,20 @@ conn_respond(CONN *conn, int tagged)
 	};
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
+
+	if (conn->term_state == conn_bye_pending) {
+		static const char msg_bye[] = "* BYE Server terminating\r\n";
+		conn->iobuf = (char*)msg_bye;
+		conn->iotodo = sizeof msg_bye - 1;
+		conn->pfd.events = POLLOUT;
+
+		conn->terminate.handler = conn->handler;
+		conn->terminate.tagged = tagged;
+		conn->handler = resume_after_bye;
+
+		return conn_ok;
+	}
+
 	size_t taglen = tagged ? conn->taglen : 0;
 
 	const char *cond =
@@ -477,6 +511,16 @@ finish_response(CONN *conn)
 {
 	conn->handler = conn_getcommand;
 	return conn_respond(conn, 1);
+}
+
+static CONN_STATUS
+resume_after_bye(CONN *conn)
+{
+	disconnect(conn);
+
+	conn->term_state = conn_bye_sent;
+	conn->handler = conn->terminate.handler;
+	return conn_respond(conn, conn->terminate.tagged);
 }
 
 static CONN_STATUS
@@ -734,17 +778,6 @@ send_symbol_data(CONN *conn)
 }
 
 static CONN_STATUS
-disconnect(CONN *conn, const char *reason)
-{
-	if (shutdown(conn->pfd.fd, SHUT_RD)) {
-		close(conn->pfd.fd);
-		conn->pfd.fd = -1;
-	}
-
-	return send_untagged(conn, conn_bye, "%s", reason);
-}
-
-static CONN_STATUS
 too_many_args(CONN *conn)
 {
 	char *p = conn->cmdp;
@@ -761,7 +794,8 @@ do_DISCONNECT(CONN *conn)
 	if (conn->cmdp < conn->cmdend)
 		return too_many_args(conn);
 
-	return disconnect(conn, "connection closing");
+	disconnect(conn);
+	return send_untagged(conn, conn_bye, "Closing connection");
 }
 
 static CONN_STATUS
@@ -770,12 +804,12 @@ do_TERMINATE(CONN *conn)
 	if (conn->cmdp < conn->cmdend)
 		return too_many_args(conn);
 
-	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
-	if (status == conn_ok) {
-		server_destroyall();
-		conn_destroyall();
-	}
-	return status;
+	for (conn = connections; conn; conn = conn->next)
+		if (conn->term_state == conn_running)
+			conn->term_state = conn_bye_pending;
+	server_destroyall();
+
+	return conn_ok;
 }
 
 static CONN_STATUS
