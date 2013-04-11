@@ -306,7 +306,8 @@ conn_respond(CONN *conn, int tagged)
 			       ? msg_completed
 			       : msg_failed));
 	}
-	conn->lastcmd = NULL;
+	if (tagged)
+		conn->lastcmd = NULL;
 
 	memcpy(p, crlf, sizeof crlf);
 	p += sizeof crlf;
