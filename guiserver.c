@@ -170,19 +170,20 @@ report_error(const char *fmt, ...)
 	fprintf(stderr, ": %s\n", strerror(errno));
 }
 
-static char *
+static CONN_STATUS
 copy_string(char **pdst, size_t *pdstalloc,
 	    const char *src, size_t srclen)
 {
 	char *dst = *pdst;
 	if (srclen > *pdstalloc) {
 		if ( !(dst = realloc(dst, srclen)) )
-			return dst;
+			return conn_error;
 		*pdst = dst;
 		*pdstalloc = srclen;
 	}
-	memcpy(dst, src, srclen);
-	return dst;
+	if (srclen)
+		memcpy(dst, src, srclen);
+	return conn_ok;
 }
 
 static void
@@ -383,9 +384,7 @@ static CONN_STATUS
 set_response(CONN *conn, CONN_COND cond, const char *msg)
 {
 	conn->cond = cond;
-	return copy_string(&conn->resp, &conn->resplen, msg, strlen(msg))
-		? conn_ok
-		: conn_error;
+	return copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
 }
 
 static CONN_STATUS run_command(CONN *conn);
@@ -417,8 +416,8 @@ conn_readcommand(CONN * conn)
 	conn->taglen = p - conn->line.data;
 	if (!conn->taglen)
 		return set_response(conn, cond_bad, "Missing tag");
-	if (!copy_string(&conn->tag, &conn->tagalloc,
-			 conn->line.data, conn->taglen)) {
+	if (copy_string(&conn->tag, &conn->tagalloc,
+			conn->line.data, conn->taglen) != conn_ok) {
 		conn->taglen = 0;
 		return conn_error;
 	}
@@ -427,7 +426,7 @@ conn_readcommand(CONN * conn)
 		return set_response(conn, cond_bad, "Missing command");
 	++p;
 
-	if (!copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p))
+	if (copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p) != conn_ok)
 		return conn_error;
 	conn->cmdend = conn->cmd + (endp - p);
 	conn->cmdp = conn->cmd;
