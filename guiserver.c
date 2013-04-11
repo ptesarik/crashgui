@@ -109,7 +109,7 @@ struct conn {
 		struct {
 			void *buffer;
 			unsigned long bytecnt;
-		} readmem;
+		} literal;
 		struct {
 			struct syment *sp;
 			const char *modname;
@@ -127,10 +127,10 @@ static CONN_STATUS conn_readcommand(CONN *conn);
 static CONN_STATUS conn_getcommand(CONN *conn);
 static CONN_STATUS literal_data_raw(CONN *conn);
 static CONN_STATUS literal_data_done(CONN *conn);
+static CONN_STATUS send_literal_data(CONN *conn);
+static CONN_STATUS send_literal_done(CONN *conn);
 static CONN_STATUS send_symbol_data(CONN *conn);
 static CONN_STATUS send_task_data(CONN *conn);
-static CONN_STATUS READMEM_size_sent(CONN *conn);
-static CONN_STATUS READMEM_done(CONN *conn);
 
 struct proto_command {
 	size_t len;
@@ -770,6 +770,35 @@ send_untagged(CONN *conn, CONN_COND cond, const char *fmt, ...)
 	return conn_respond(conn, 0, cond);
 }
 
+static CONN_STATUS
+send_literal(CONN *conn, void *buffer, size_t bytecnt)
+{
+	conn->literal.buffer = buffer;
+	conn->literal.bytecnt = bytecnt;
+	conn->handler = send_literal_data;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_literal_data(CONN *conn)
+{
+	conn->iobuf = conn->literal.buffer;
+	conn->iotodo = conn->literal.bytecnt;
+	conn->pfd.events = POLLOUT;
+
+	conn->handler = send_literal_done;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_literal_done(CONN *conn)
+{
+	free(conn->literal.buffer);
+
+	conn->handler = finish_response;
+	return conn_ok;
+}
+
 /* This function returns NULL if sp is invalid */
 static const char *
 get_syment_module(struct syment *sp)
@@ -893,6 +922,7 @@ do_TERMINATE(CONN *conn)
 static CONN_STATUS
 do_READMEM(CONN *conn)
 {
+	CONN_STATUS status;
 	char *tok;
 	size_t len;
 
@@ -905,10 +935,11 @@ do_READMEM(CONN *conn)
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
+	unsigned long bytecnt;
 	if (read_space(conn))
 		return conn_ok;
 	if (read_atom(conn, &tok, &len) ||
-	    convert_num(tok, len, &conn->readmem.bytecnt, 16))
+	    convert_num(tok, len, &bytecnt, 16))
 		return set_response(conn, cond_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
@@ -940,39 +971,22 @@ do_READMEM(CONN *conn)
 			return too_many_args(conn);
 	}
 
-	conn->readmem.buffer = malloc(conn->readmem.bytecnt);
-	if (!conn->readmem.buffer)
+	char *buffer = malloc(bytecnt);
+	if (!buffer)
 		return set_response(conn, cond_bad,
 				    "Buffer allocation failure");
 
-	if (!readmem(addr, memtype,
-		     conn->readmem.buffer, conn->readmem.bytecnt,
-		     "crashgui", RETURN_ON_ERROR))
+	if (!readmem(addr, memtype, buffer, bytecnt,
+		     "crashgui", RETURN_ON_ERROR)) {
+		free(buffer);
 		return set_response(conn, cond_no, "Read error");
+	}
 
-	conn->handler = READMEM_size_sent;
-	return send_untagged(conn, cond_dump, "%lx {%lu}",
-			     addr, conn->readmem.bytecnt);
-}
+	if ( (status = send_untagged(conn, cond_dump, "%lx {%lu}",
+				     addr, bytecnt)) != conn_ok)
+		return status;
 
-static CONN_STATUS
-READMEM_size_sent(CONN *conn)
-{
-	conn->iobuf = conn->readmem.buffer;
-	conn->iotodo = conn->readmem.bytecnt;
-	conn->pfd.events = POLLOUT;
-
-	conn->handler = READMEM_done;
-	return conn_ok;
-}
-
-static CONN_STATUS
-READMEM_done(CONN *conn)
-{
-	free(conn->readmem.buffer);
-
-	conn->handler = finish_response;
-	return conn_ok;
+	return send_literal(conn, buffer, bytecnt);
 }
 
 static CONN_STATUS SYMBOL_on_read(CONN *conn, char *tok, size_t len);
