@@ -37,16 +37,20 @@ typedef struct server {
 } SERVER;
 
 typedef enum conn_status {
-	conn_ok,		/* OK */
-	conn_bad,		/* Malformed command */
-	conn_no,		/* NO response */
-	conn_bye,		/* Connection terminating */
-	conn_dump,		/* DUMP response */
-	conn_symbol,		/* SYMBOL response */
-
+	conn_ok,		/* Normal operation */
 	conn_eof,		/* End of stream */
-	conn_fatal = -1		/* Fatal error */
+	conn_error = -1		/* Error condition */
 } CONN_STATUS;
+
+typedef enum conn_cond {
+	cond_ok,		/* OK */
+	cond_bad,		/* Malformed command */
+	cond_no,		/* NO response */
+	cond_bye,		/* Connection terminating */
+	cond_dump,		/* DUMP response */
+	cond_symbol,		/* SYMBOL response */
+
+} CONN_COND;
 
 typedef struct conn CONN;
 typedef CONN_STATUS (*conn_handler_t)(CONN *);
@@ -58,7 +62,7 @@ struct conn {
 	struct pollfd pfd;
 
 	conn_handler_t handler;
-	enum conn_status status;
+	enum conn_cond cond;
 	const struct proto_command *lastcmd;
 
 	/* Server termination */
@@ -274,7 +278,7 @@ conn_init(int fd)
 
 		/* Prepare the greeting message */
 		int n;
-		ret->status = conn_ok;
+		ret->cond = cond_ok;
 		n = snprintf(NULL, 0, GREET_FMT);
 		if (n < 0 || !(ret->resp = malloc(n+1))) {
 			free(ret);
@@ -369,16 +373,25 @@ ensure_buffer(CONN *conn, size_t size)
 
 	char *newbuf = realloc(conn->buf, size);
 	if (!newbuf)
-		return conn_bad;
+		return conn_error;
 	conn->buf = newbuf;
 	conn->bufalloc = size;
 	return conn_ok;
 }
 
+static CONN_STATUS
+set_response(CONN *conn, CONN_COND cond, const char *msg)
+{
+	conn->cond = cond;
+	return copy_string(&conn->resp, &conn->resplen, msg, strlen(msg))
+		? conn_ok
+		: conn_error;
+}
+
 static CONN_STATUS run_command(CONN *conn);
 
 static CONN_STATUS
-do_readcommand(CONN * conn)
+conn_readcommand(CONN * conn)
 {
 	conn->gls = fdgetline(&conn->line, conn->pfd.fd);
 	if (conn->gls < GLS_ONE) {
@@ -386,7 +399,7 @@ do_readcommand(CONN * conn)
 			return conn_ok;
 		if (conn->gls == GLS_EOF || conn->gls == GLS_FINAL)
 			return conn_eof;
-		return conn_fatal;
+		return conn_error;
 	}
 	conn->pfd.events = 0;
 	conn->handler = finish_response;
@@ -401,31 +414,26 @@ do_readcommand(CONN * conn)
 	conn->taglen = 0;
 	char *p = conn->line.data, *endp = p + length;
 	while (p != endp && *p != ' ')
-		++conn->taglen, ++p;
-	if (!copy_string(&conn->tag, &conn->tagalloc,
-			 conn->line.data, conn->taglen)) {
-		conn->taglen = 0;
-		return conn_fatal;
-	}
-	if (!conn->taglen || p == endp)
-		return conn_bad;
+		++p;
+	if (p == conn->line.data)
+		return set_response(conn, cond_bad, "Missing tag");
+	if (p == endp)
+		return set_response(conn, cond_bad, "Missing command");
+	conn->taglen = p - conn->line.data;
 
-	if (p == endp || *p != ' ')
-		return conn_bad;
+	if (!copy_string(&conn->tag, &conn->tagalloc,
+			 conn->line.data, p - conn->line.data)) {
+		conn->taglen = 0;
+		return conn_error;
+	}
 	++p;
 
 	if (!copy_string(&conn->cmd, &conn->cmdalloc, p, endp - p))
-		return conn_fatal;
+		return conn_error;
 	conn->cmdend = conn->cmd + (endp - p);
 	conn->cmdp = conn->cmd;
 
 	return run_command(conn);
-}
-
-static CONN_STATUS
-conn_readcommand(CONN *conn)
-{
-	return conn->status = do_readcommand(conn);
 }
 
 static CONN_STATUS
@@ -440,12 +448,12 @@ static CONN_STATUS
 conn_respond(CONN *conn, int tagged)
 {
 	static const char *const msg_cond[] = {
-		[conn_ok] =     "OK",
-		[conn_no] =     "NO",
-		[conn_bad] =    "BAD",
-		[conn_bye] =    "BYE",
-		[conn_dump] =   "DUMP",
-		[conn_symbol] = "SYMBOL",
+		[cond_ok] =     "OK",
+		[cond_no] =     "NO",
+		[cond_bad] =    "BAD",
+		[cond_bye] =    "BYE",
+		[cond_dump] =   "DUMP",
+		[cond_symbol] = "SYMBOL",
 	};
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
@@ -453,9 +461,9 @@ conn_respond(CONN *conn, int tagged)
 	size_t taglen = tagged ? conn->taglen : 0;
 
 	const char *cond =
-		(conn->status < sizeof(msg_cond)/sizeof(msg_cond[0]))
-		? msg_cond[conn->status]
-		: msg_cond[conn_bad];
+		(conn->cond < sizeof(msg_cond)/sizeof(msg_cond[0]))
+		? msg_cond[conn->cond]
+		: msg_cond[cond_bad];
 
 	size_t sz = (taglen ?: 1)	/* tag or "*" */
 		+ 1			/* SP */
@@ -470,7 +478,7 @@ conn_respond(CONN *conn, int tagged)
 		+ 2;			/* CRLF */
 
 	if (ensure_buffer(conn, sz + 1) != conn_ok)
-		return conn_fatal;
+		return conn_error;
 
 	char *p = conn->buf;
 	if (taglen) {
@@ -490,7 +498,7 @@ conn_respond(CONN *conn, int tagged)
 		conn->resplen = 0;
 	} else if (conn->lastcmd) {
 		p = stpcpy(p, conn->lastcmd->name);
-		p = stpcpy(p, (conn->status == conn_ok
+		p = stpcpy(p, (conn->cond == cond_ok
 			       ? msg_completed
 			       : msg_failed));
 	}
@@ -508,13 +516,6 @@ conn_respond(CONN *conn, int tagged)
 }
 
 static CONN_STATUS
-set_response(CONN *conn, CONN_STATUS status, const char *msg)
-{
-	copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
-	return conn->status = status;
-}
-
-static CONN_STATUS
 finish_response(CONN *conn)
 {
 	conn->handler = conn_getcommand;
@@ -525,7 +526,7 @@ static CONN_STATUS
 read_space(CONN *conn)
 {
 	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ')
-		return conn_bad;
+		return conn_error;
 	++conn->cmdp;
 	return conn_ok;
 }
@@ -540,7 +541,7 @@ read_number(CONN *conn, char **num, size_t *numlen)
 	*num = conn->cmdp;
 	*numlen = p - conn->cmdp;
 	conn->cmdp = p;
-	return *numlen ? conn_ok : conn_bad;
+	return *numlen ? conn_ok : conn_error;
 }
 
 static CONN_STATUS
@@ -553,7 +554,7 @@ read_atom(CONN *conn, char **atom, size_t *atomlen)
 	*atom = conn->cmdp;
 	*atomlen = p - conn->cmdp;
 	conn->cmdp = p;
-	return *atomlen ? conn_ok : conn_bad;
+	return *atomlen ? conn_ok : conn_error;
 }
 
 static CONN_STATUS
@@ -561,7 +562,7 @@ read_quoted(CONN *conn, char **string, size_t *len)
 {
 	char *p = conn->cmdp, *q;
 	if (p == conn->cmdend || *p != '\"')
-		return set_response(conn, conn_bad, "Quoted string expected");
+		return set_response(conn, cond_bad, "Quoted string expected");
 
 	*string = q = ++p;
 	while (p != conn->cmdend && *p != '\"') {
@@ -572,7 +573,7 @@ read_quoted(CONN *conn, char **string, size_t *len)
 	}
 
 	if (p == conn->cmdend || *p != '\"')
-		return set_response(conn, conn_bad, "Invalid quoted string");
+		return set_response(conn, cond_bad, "Invalid quoted string");
 	conn->cmdp = ++p;
 
 	*len = q - *string;
@@ -585,7 +586,7 @@ read_literal(CONN *conn, read_handler_t handler)
 	CONN_STATUS status;
 
 	if (conn->cmdp == conn->cmdend || *conn->cmdp != '{')
-		return set_response(conn, conn_bad, "Literal expected");
+		return set_response(conn, cond_bad, "Literal expected");
 	++conn->cmdp;
 
 	/* Read the number of bytes */
@@ -595,14 +596,14 @@ read_literal(CONN *conn, read_handler_t handler)
 		return status;
 	conn->read.size = strtoul(num, &endnum, 10);
 	if (endnum != conn->cmdp)
-		return set_response(conn, conn_bad, "Invalid literal");
+		return set_response(conn, cond_bad, "Invalid literal");
 
 	if (conn->cmdp + 1 != conn->cmdend || *conn->cmdp != '}')
-		return set_response(conn, conn_bad, "Invalid literal");
+		return set_response(conn, cond_bad, "Invalid literal");
 	++conn->cmdp;
 
 	if (ensure_buffer(conn, conn->read.size) != conn_ok)
-		return set_response(conn, conn_bad, strerror(errno));
+		return set_response(conn, cond_bad, strerror(errno));
 
 	static char msg[] = "+ Ready for literal data\r\n";
 	conn->iobuf = msg;
@@ -654,7 +655,7 @@ read_astring(CONN *conn, read_handler_t handler)
 	size_t len;
 
 	if (p == conn->cmdend)
-		return conn_bad;
+		return conn_error;
 	else if (*p == '\"')
 		status = read_quoted(conn, &string, &len);
 	else if (*p == '{')
@@ -675,23 +676,24 @@ run_command(CONN *conn)
 	CONN_STATUS status;
 
 	if ( (status = read_atom(conn, &cmd, &len)) != conn_ok)
-		return conn->status = status;
+		return set_response(conn, cond_bad, "Command expected");
 	toupper_string(cmd, len);
 
 	const struct proto_command *cp = cmds;
 	while (cp->len) {
 		if (cp->len == len && !memcmp(cp->name, cmd, len)) {
+			conn->cond = cond_ok;
 			conn->lastcmd = cp;
-			return conn->status = cp->handler(conn);
+			return cp->handler(conn);
 		}
 		++cp;
 	}
 
-	return set_response(conn, conn_bad, "Unknown protocol command.");
+	return set_response(conn, cond_bad, "Unknown protocol command.");
 }
 
 static CONN_STATUS
-send_untagged(CONN *conn, CONN_STATUS status, const char *fmt, ...)
+send_untagged(CONN *conn, CONN_COND cond, const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -700,16 +702,16 @@ send_untagged(CONN *conn, CONN_STATUS status, const char *fmt, ...)
 
 	if (n >= conn->bufalloc) {
 		if (ensure_buffer(conn, n + 1) != conn_ok)
-			return set_response(conn, conn_fatal, strerror(errno));
+			return set_response(conn, cond_bad, strerror(errno));
 		va_start(ap, fmt);
 		vsnprintf(conn->buf, conn->bufalloc, fmt, ap);
 		va_end(ap);
 	}
 
-	CONN_STATUS oldstatus = conn->status;
-	set_response(conn, status, conn->buf);
-	status = conn_respond(conn, 0);
-	conn->status = (status == conn_fatal) ? status : oldstatus;
+	CONN_COND oldcond = conn->cond;
+	set_response(conn, cond, conn->buf);
+	CONN_STATUS status = conn_respond(conn, 0);
+	conn->cond = (status == conn_error) ? cond_bad : oldcond;
 	return status;
 }
 
@@ -756,7 +758,7 @@ send_symbol_data(CONN *conn)
 
 	if (nextmod)
 		symsize = nextsp->value - sp->value;
-	status = send_untagged(conn, conn_symbol,
+	status = send_untagged(conn, cond_symbol,
 			       "%lx %lx %c \"%s\" \"%s\"",
 			       sp->value, symsize, sp->type,
 			       sp->name, conn->symbol.modname);
@@ -781,7 +783,7 @@ too_many_args(CONN *conn)
 	char *p = conn->cmdp;
 	while (p != conn->cmdend && *p == ' ')
 		++p;
-	return set_response(conn, conn_bad, (p != conn->cmdend
+	return set_response(conn, cond_bad, (p != conn->cmdend
 					     ? "Too many arguments"
 					     : "Trailing space"));
 }
@@ -793,7 +795,7 @@ do_DISCONNECT(CONN *conn)
 		return too_many_args(conn);
 
 	disconnect(conn);
-	return send_untagged(conn, conn_bye, "Closing connection");
+	return send_untagged(conn, cond_bye, "Closing connection");
 }
 
 static CONN_STATUS
@@ -819,12 +821,12 @@ do_READMEM(CONN *conn)
 
 	/* Get starting address */
 	if ( (status = read_space(conn)) != conn_ok)
-		return status;
+		return set_response(conn, cond_bad, "Missing space");
 	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-		return status;
+		return set_response(conn, cond_bad, "Invalid atom");
 	unsigned long addr = strtoul(tok, &endnum, 16);
 	if (endnum != conn->cmdp)
-		return set_response(conn, conn_bad, "Invalid start address");
+		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
 	if ( (status = read_space(conn)) != conn_ok)
@@ -833,7 +835,7 @@ do_READMEM(CONN *conn)
 		return status;
 	unsigned long bytecnt = strtoul(tok, &endnum, 16);
 	if (endnum != conn->cmdp)
-		return set_response(conn, conn_bad, "Invalid byte count");
+		return set_response(conn, cond_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
 	int memtype = KVADDR;
@@ -855,7 +857,7 @@ do_READMEM(CONN *conn)
 			else if (len == 8 && !memcmp(tok, "FILEADDR", 8))
 				memtype = FILEADDR;
 			else
-				return set_response(conn, conn_bad,
+				return set_response(conn, cond_bad,
 						    "Invalid memory type");
 		}
 
@@ -865,19 +867,19 @@ do_READMEM(CONN *conn)
 
 	char *buffer = malloc(bytecnt);
 	if (!buffer)
-		return set_response(conn, conn_bad,
+		return set_response(conn, cond_bad,
 				    "Buffer allocation failure");
 
 	if (!readmem(addr, memtype, buffer, bytecnt,
 		     "crashgui", RETURN_ON_ERROR))
-		return set_response(conn, conn_no, "Read error");
+		return set_response(conn, cond_no, "Read error");
 
-	status = send_untagged(conn, conn_dump, "%lx {%lu}",
+	status = send_untagged(conn, cond_dump, "%lx {%lu}",
 			       addr, (unsigned long) bytecnt);
 	if (status == conn_ok) {
 		size_t sz = write(conn->pfd.fd, buffer, bytecnt);
 		if (sz != bytecnt)
-			status = conn_fatal;
+			status = conn_error;
 	}
 
 	free(buffer);
@@ -903,7 +905,7 @@ SYMBOL_on_read(CONN *conn, char *tok, size_t len)
 	CONN_STATUS status;
 
 	if ((status = ensure_buffer(conn, len + 1)) != conn_ok)
-		return set_response(conn, status, strerror(errno));
+		return set_response(conn, cond_bad, strerror(errno));
 	if (tok != conn->buf) {
 		memcpy(conn->buf, tok, len);
 		tok = conn->buf;
@@ -912,7 +914,7 @@ SYMBOL_on_read(CONN *conn, char *tok, size_t len)
 
 	struct syment *sp = symbol_search(tok);
 	if (!sp)
-		return set_response(conn, conn_no, "Symbol not found");
+		return set_response(conn, cond_no, "Symbol not found");
 
 	return send_symbol(conn, sp, 1);
 }
@@ -931,7 +933,7 @@ do_ADDRESS(CONN *conn)
 		return status;
 	unsigned long addr = strtoul(tok, &endnum, 16);
 	if (endnum != conn->cmdp)
-		return set_response(conn, conn_bad, "Invalid address");
+		return set_response(conn, cond_bad, "Invalid address");
 
 	if (conn->cmdp != conn->cmdend)
 		return too_many_args(conn);
@@ -939,7 +941,7 @@ do_ADDRESS(CONN *conn)
 	ulong offset;
 	struct syment *sp = value_search(addr, &offset);
 	if (!sp)
-		return set_response(conn, conn_no, "Symbol not found");
+		return set_response(conn, cond_no, "Symbol not found");
 
 	return send_symbol(conn, sp, 0);
 }
@@ -953,10 +955,10 @@ handle_rawio(CONN *conn, struct pollfd *pfd)
 	else if (pfd->revents & POLLOUT)
 		res = write(pfd->fd, conn->iobuf, conn->iotodo);
 	else
-		return conn_bad;
+		return conn_error;
 
 	if (res < 0)
-		return conn_fatal;
+		return conn_error;
 	if (!res)
 		return conn_eof;
 	conn->iobuf += res;
@@ -973,7 +975,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 	CONN_STATUS status;
 
 	if (pfd->revents & (POLLERR|POLLNVAL))
-		status = conn_fatal;
+		status = conn_error;
 	else if (pfd->revents & POLLHUP)
 		status = conn_eof;
 	else if (conn->iotodo)
@@ -984,7 +986,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 	while (status == conn_ok && !conn->pfd.events && !check_bye(conn))
 		status = conn->handler(conn);
 
-	if (status == conn_fatal || status == conn_eof || conn->pfd.fd < 0)
+	if (status != conn_ok || conn->pfd.fd < 0)
 		conn_done(conn);
 
 	return conn_ok;
