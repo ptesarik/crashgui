@@ -529,8 +529,10 @@ finish_response(CONN *conn)
 static int
 read_space(CONN *conn)
 {
-	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ')
+	if (conn->cmdp == conn->cmdend || *conn->cmdp != ' ') {
+		set_response(conn, cond_bad, "Space expected");
 		return -1;
+	}
 	++conn->cmdp;
 	return 0;
 }
@@ -571,7 +573,11 @@ read_atom(CONN *conn, char **atom, size_t *atomlen)
 	*atom = conn->cmdp;
 	*atomlen = p - conn->cmdp;
 	conn->cmdp = p;
-	return *atomlen ? 0 : -1;
+	if (!*atomlen) {
+		set_response(conn, cond_bad, "Atom expected");
+		return -1;
+	}
+	return 0;
 }
 
 static int
@@ -675,9 +681,10 @@ read_astring(CONN *conn, read_handler_t handler)
 	size_t len;
 	int ret;
 
-	if (p == conn->cmdend)
+	if (p == conn->cmdend) {
+		set_response(conn, cond_bad, "Expecting atom or string");
 		return -1;
-	else if (*p == '\"')
+	} else if (*p == '\"')
 		ret = read_quoted(conn, &string, &len);
 	else if (*p == '{')
 		return read_literal(conn, handler);
@@ -837,14 +844,14 @@ do_READMEM(CONN *conn)
 	/* Get starting address */
 	unsigned long addr;
 	if (read_space(conn))
-		return set_response(conn, cond_bad, "Space expected");
+		return conn_ok;
 	if (read_atom(conn, &tok, &len) ||
 	    convert_num(tok, len, &addr, 16))
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
 	if (read_space(conn))
-		return set_response(conn, cond_bad, "Space expected");
+		return conn_ok;
 	if (read_atom(conn, &tok, &len) ||
 	    convert_num(tok, len, &conn->readmem.bytecnt, 16))
 		return set_response(conn, cond_bad, "Invalid byte count");
@@ -853,7 +860,7 @@ do_READMEM(CONN *conn)
 	int memtype = KVADDR;
 	if (conn->cmdp != conn->cmdend) {
 		if (read_space(conn))
-			return set_response(conn, cond_bad, "Space expected");
+			return conn_ok;
 		if (read_atom(conn, &tok, &len))
 			return set_response(conn, cond_bad,
 					    "Invalid memory type");
@@ -920,9 +927,9 @@ do_SYMBOL(CONN *conn)
 {
 	/* Get the symbol name */
 	if (read_space(conn))
-		return set_response(conn, cond_bad, "Space expected");
+		return conn_ok;
 	if (read_astring(conn, SYMBOL_on_read))
-		return set_response(conn, cond_bad, "Invalid symbol name");
+		return conn_ok;
 	return conn_ok;
 }
 
@@ -953,7 +960,7 @@ do_ADDRESS(CONN *conn)
 	/* Get the address */
 	unsigned long addr;
 	if (read_space(conn))
-		return set_response(conn, cond_bad, "Space expected");
+		return conn_ok;
 	if (read_atom(conn, &tok, &len) ||
 	    convert_num(tok, len, &addr, 16))
 		return set_response(conn, cond_bad, "Invalid address");
