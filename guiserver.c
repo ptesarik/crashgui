@@ -107,6 +107,10 @@ struct conn {
 			unsigned long size;
 		} read;
 		struct {
+			void *buffer;
+			unsigned long bytecnt;
+		} readmem;
+		struct {
 			struct syment *sp;
 			const char *modname;
 			int byname;
@@ -121,6 +125,8 @@ static CONN_STATUS conn_getcommand(CONN *conn);
 static CONN_STATUS literal_data_raw(CONN *conn);
 static CONN_STATUS literal_data_done(CONN *conn);
 static CONN_STATUS send_symbol_data(CONN *conn);
+static CONN_STATUS READMEM_size_sent(CONN *conn);
+static CONN_STATUS READMEM_done(CONN *conn);
 
 struct proto_command {
 	size_t len;
@@ -827,7 +833,7 @@ do_READMEM(CONN *conn)
 		return status;
 	if ((status = read_atom(conn, &tok, &len)) != conn_ok)
 		return status;
-	unsigned long bytecnt = strtoul(tok, &endnum, 16);
+	conn->readmem.bytecnt = strtoul(tok, &endnum, 16);
 	if (endnum != conn->cmdp)
 		return set_response(conn, cond_bad, "Invalid byte count");
 
@@ -859,25 +865,39 @@ do_READMEM(CONN *conn)
 			return too_many_args(conn);
 	}
 
-	char *buffer = malloc(bytecnt);
-	if (!buffer)
+	conn->readmem.buffer = malloc(conn->readmem.bytecnt);
+	if (!conn->readmem.buffer)
 		return set_response(conn, cond_bad,
 				    "Buffer allocation failure");
 
-	if (!readmem(addr, memtype, buffer, bytecnt,
+	if (!readmem(addr, memtype,
+		     conn->readmem.buffer, conn->readmem.bytecnt,
 		     "crashgui", RETURN_ON_ERROR))
 		return set_response(conn, cond_no, "Read error");
 
-	status = send_untagged(conn, cond_dump, "%lx {%lu}",
-			       addr, (unsigned long) bytecnt);
-	if (status == conn_ok) {
-		size_t sz = write(conn->pfd.fd, buffer, bytecnt);
-		if (sz != bytecnt)
-			status = conn_error;
-	}
+	conn->handler = READMEM_size_sent;
+	return send_untagged(conn, cond_dump, "%lx {%lu}",
+			     addr, conn->readmem.bytecnt);
+}
 
-	free(buffer);
-	return status;
+static CONN_STATUS
+READMEM_size_sent(CONN *conn)
+{
+	conn->iobuf = conn->readmem.buffer;
+	conn->iotodo = conn->readmem.bytecnt;
+	conn->pfd.events = POLLOUT;
+
+	conn->handler = READMEM_done;
+	return conn_ok;
+}
+
+static CONN_STATUS
+READMEM_done(CONN *conn)
+{
+	free(conn->readmem.buffer);
+
+	conn->handler = finish_response;
+	return conn_ok;
 }
 
 static CONN_STATUS SYMBOL_on_read(CONN *conn, char *tok, size_t len);
