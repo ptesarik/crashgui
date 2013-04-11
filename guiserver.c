@@ -870,8 +870,6 @@ SYMBOL_on_read(CONN *conn, char *tok, size_t len)
 {
 	CONN_STATUS status;
 
-	conn->handler = finish_response;
-
 	if ((status = ensure_buffer(conn, len + 1)) != conn_ok)
 		return set_response(conn, status, strerror(errno));
 	if (tok != conn->buf) {
