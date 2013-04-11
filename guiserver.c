@@ -256,6 +256,7 @@ conn_respond(CONN *conn, int tagged)
 {
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
+	size_t taglen = tagged ? conn->taglen : 0;
 	const char *cond;
 
 	switch (conn->status) {
@@ -268,7 +269,7 @@ conn_respond(CONN *conn, int tagged)
 	default:	cond = "BAD"; break;
 	}
 
-	size_t sz = (conn->taglen ?: 1) /* tag or "*" */
+	size_t sz = (taglen ?: 1)	/* tag or "*" */
 		+ 1			/* SP */
 		+ strlen(cond)		/* condition code */
 		+ 1			/* SP */
@@ -284,7 +285,7 @@ conn_respond(CONN *conn, int tagged)
 		return conn_fatal;
 
 	char *p = conn->buf;
-	if (conn->taglen) {
+	if (taglen) {
 		memcpy(p, conn->tag, conn->taglen);
 		p += conn->taglen;
 		conn->taglen = 0;
