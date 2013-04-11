@@ -390,7 +390,9 @@ static CONN_STATUS
 set_response(CONN *conn, CONN_COND cond, const char *msg)
 {
 	conn->cond = cond;
-	return copy_string(&conn->resp, &conn->resplen, msg, strlen(msg));
+	if (copy_string(&conn->resp, &conn->resplen, msg, strlen(msg)) != conn_ok)
+		conn->resplen = 0;
+	return conn_ok;
 }
 
 static CONN_STATUS run_command(CONN *conn);
