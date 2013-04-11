@@ -47,6 +47,7 @@ typedef enum conn_cond {
 	cond_bad,
 	cond_no,
 	cond_bye,
+	cond_command,
 	cond_dump,
 	cond_symbol,
 	cond_task,
@@ -140,6 +141,7 @@ struct proto_command {
 
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
+static CONN_STATUS do_COMMAND(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
 static CONN_STATUS do_SYMBOL(CONN *conn);
 static CONN_STATUS do_ADDRESS(CONN *conn);
@@ -150,6 +152,7 @@ static CONN_STATUS do_PID(CONN *conn);
 static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
+	DEFINE_CMD(COMMAND),
 	DEFINE_CMD(READMEM),
 	DEFINE_CMD(SYMBOL),
 	DEFINE_CMD(ADDRESS),
@@ -489,6 +492,7 @@ conn_respond(CONN *conn, int tagged, CONN_COND cond)
 		[cond_no] =     "NO",
 		[cond_bad] =    "BAD",
 		[cond_bye] =    "BYE",
+		[cond_command] = "COMMAND",
 		[cond_dump] =   "DUMP",
 		[cond_symbol] = "SYMBOL",
 		[cond_task] =   "TASK",
@@ -917,6 +921,66 @@ do_TERMINATE(CONN *conn)
 
 	terminate();
 	return conn_ok;
+}
+
+static CONN_STATUS COMMAND_on_read(CONN *conn, char *tok, size_t len);
+
+static CONN_STATUS
+do_COMMAND(CONN *conn)
+{
+	/* Get the symbol name */
+	if (read_space(conn))
+		return conn_ok;
+	if (read_astring(conn, COMMAND_on_read))
+		return conn_ok;
+	return conn_ok;
+}
+
+static CONN_STATUS
+COMMAND_on_read(CONN *conn, char *tok, size_t len)
+{
+	CONN_STATUS status;
+
+	if (ensure_buffer(conn, len + 1))
+		return set_response(conn, cond_bad, strerror(errno));
+	if (tok != conn->buf) {
+		memcpy(conn->buf, tok, len);
+		tok = conn->buf;
+	}
+	tok[len] = 0;
+
+	/* Clean out all linefeeds and leading/trailing spaces */
+	clean_line(tok);
+
+	/* Setup the global argcnt and args[] array */
+        argcnt = parse_line(tok, args);
+
+        optind = argerrs = 0;
+
+        struct command_table_entry *ct = get_command_table_entry(args[0]);
+	if (!ct)
+		return set_response(conn, cond_no, "Command not found");
+
+	char *buffer;
+	size_t bufferlen;
+	FILE *memf = open_memstream(&buffer, &bufferlen);
+	if (!memf)
+		return set_response(conn, cond_bad, strerror(errno));
+
+	FILE *prevfp = fp;
+	fp = memf;
+	pc->curcmd = ct->name;
+	pc->cmdgencur++;
+	ct->func();
+	fp = prevfp;
+	if (fclose(memf))
+		return set_response(conn, cond_bad, strerror(errno));
+
+	if ( (status = send_untagged(conn, cond_command, "{%lu}",
+				     (unsigned long) bufferlen)) != conn_ok)
+		return status;
+
+	return send_literal(conn, buffer, bufferlen);
 }
 
 static CONN_STATUS
