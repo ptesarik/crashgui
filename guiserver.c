@@ -684,9 +684,8 @@ run_command(CONN *conn)
 {
 	char *cmd;
 	size_t len;
-	CONN_STATUS status;
 
-	if ( (status = read_atom(conn, &cmd, &len)) != conn_ok)
+	if (read_atom(conn, &cmd, &len) != conn_ok)
 		return set_response(conn, cond_bad, "Command expected");
 	toupper_string(cmd, len);
 
@@ -826,19 +825,18 @@ do_READMEM(CONN *conn)
 {
 	char *tok;
 	size_t len;
-	CONN_STATUS status;
 
 	/* Get starting address */
 	unsigned long addr;
-	if ( (status = read_space(conn)) != conn_ok)
-		return set_response(conn, cond_bad, "Missing space");
+	if (read_space(conn) != conn_ok)
+		return set_response(conn, cond_bad, "Space expected");
 	if (read_atom(conn, &tok, &len) != conn_ok ||
 	    convert_num(tok, len, &addr, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
-	if ( (status = read_space(conn)) != conn_ok)
-		return status;
+	if (read_space(conn) != conn_ok)
+		return set_response(conn, cond_bad, "Space expected");
 	if (read_atom(conn, &tok, &len) != conn_ok ||
 	    convert_num(tok, len, &conn->readmem.bytecnt, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid byte count");
@@ -846,10 +844,11 @@ do_READMEM(CONN *conn)
 	/* Get (optional) memory type */
 	int memtype = KVADDR;
 	if (conn->cmdp != conn->cmdend) {
-		if ((status = read_space(conn)) != conn_ok)
-			return status;
-		if ((status = read_atom(conn, &tok, &len)) != conn_ok)
-			return status;
+		if (read_space(conn) != conn_ok)
+			return set_response(conn, cond_bad, "Space expected");
+		if (read_atom(conn, &tok, &len) != conn_ok)
+			return set_response(conn, cond_bad,
+					    "Invalid memory type");
 		toupper_string(tok, len);
 		if (len) {
 			if (len == 6 && !memcmp(tok, "KVADDR", 6))
@@ -911,11 +910,9 @@ static CONN_STATUS SYMBOL_on_read(CONN *conn, char *tok, size_t len);
 static CONN_STATUS
 do_SYMBOL(CONN *conn)
 {
-	CONN_STATUS status;
-
 	/* Get the symbol name */
-	if ( (status = read_space(conn)) != conn_ok)
-		return status;
+	if (read_space(conn) != conn_ok)
+		return set_response(conn, cond_bad, "Space expected");
 	return read_astring(conn, SYMBOL_on_read);
 }
 
@@ -940,14 +937,13 @@ SYMBOL_on_read(CONN *conn, char *tok, size_t len)
 static CONN_STATUS
 do_ADDRESS(CONN *conn)
 {
-	CONN_STATUS status;
 	char *tok;
 	size_t len;
 
 	/* Get the address */
 	unsigned long addr;
-	if ( (status = read_space(conn)) != conn_ok)
-		return status;
+	if (read_space(conn) != conn_ok)
+		return set_response(conn, cond_bad, "Space expected");
 	if (read_atom(conn, &tok, &len) != conn_ok ||
 	    convert_num(tok, len, &addr, 16) != conn_ok)
 		return set_response(conn, cond_bad, "Invalid address");
