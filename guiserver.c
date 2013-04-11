@@ -29,6 +29,13 @@ void guiserver_fini(void);    /* destructor function (optional) */
 
 #define LISTEN_BACKLOG  1
 
+typedef struct server {
+	struct server *next, **pprev;
+
+	struct pollfd pfd;
+	struct sockaddr_un sun;
+} SERVER;
+
 typedef enum conn_status {
 	conn_ok,		/* OK */
 	conn_bad,		/* Malformed command */
@@ -131,12 +138,13 @@ static const char crlf[2] = { '\r', '\n' };
 #  define offsetof(TYPE, MEMBER) ((ulong)&((TYPE *)0)->MEMBER)
 #endif
 
+/* Linked list of active servers */
+static struct server *servers;
+static int nservers;
+
 /* Linked list of open connexions */
 static struct conn *connections;
 static int nconnections;
-
-/* Non-zero if terminating */
-static int terminating;
 
 static void
 report_error(const char *fmt, ...)
@@ -171,6 +179,81 @@ toupper_string(char *str, size_t len)
 		*str = toupper(*str);
 		++str;
 	}
+}
+
+static void server_done(SERVER *server);
+
+static SERVER *
+server_init(const char *path)
+{
+	size_t sz;
+	SERVER *ret;
+	int i;
+
+	sz = offsetof(struct sockaddr_un, sun_path) + strlen(path) + 1;
+	if (! (ret = malloc(offsetof(struct server, sun) + sz)) ) {
+		report_error("Cannot allocate server struct for %s", path);
+		return NULL;
+	}
+	ret->next = servers;
+	ret->pprev = &servers;
+	if (servers)
+		servers->pprev = &ret->next;
+	servers = ret;
+	++nservers;
+
+	ret->pfd.fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (ret->pfd.fd < 0) {
+		report_error("Cannot create socket");
+		goto err;
+	}
+
+	ret->sun.sun_family = AF_UNIX;
+	strcpy(ret->sun.sun_path, path);
+	for (i = 1; i >= 0; --i) {
+		if (!i)
+			unlink(path);
+		if (!bind(ret->pfd.fd, (struct sockaddr *) &ret->sun, sz))
+			break;
+	}
+	if (i < 0) {
+		report_error("Cannot bind socket to %s", path);
+		goto err;
+	}
+
+	if (listen(ret->pfd.fd, LISTEN_BACKLOG)) {
+		report_error("Cannot listen on %s", path);
+		goto err;
+	}
+	ret->pfd.events = POLLIN;
+
+	return ret;
+
+ err:
+	server_done(ret);
+	return NULL;
+}
+
+static void
+server_done(SERVER *server)
+{
+	--nservers;
+	if (server->next)
+		server->next->pprev = server->pprev;
+	*server->pprev = server->next;
+
+	if (server->pfd.fd >= 0) {
+		close(server->pfd.fd);
+		unlink(server->sun.sun_path);
+	}
+	free(server);
+}
+
+static void
+server_destroyall(void)
+{
+	while (servers)
+		server_done(servers);
 }
 
 static CONN *
@@ -686,8 +769,10 @@ do_TERMINATE(CONN *conn)
 		return too_many_args(conn);
 
 	CONN_STATUS status = disconnect(conn, "terminating crashgui server");
-	if (status == conn_ok)
-		terminating = 1;
+	if (status == conn_ok) {
+		server_destroyall();
+		conn_destroyall();
+	}
 	return status;
 }
 
@@ -891,68 +976,35 @@ handle_accept(struct pollfd *pfd)
 }
 
 static int
-run_server(const char *path)
+run_server_loop(struct pollfd **pfds)
 {
-	size_t sz = offsetof(struct sockaddr_un, sun_path) + strlen(path) + 1;
-	struct sockaddr_un *sun;
-	struct pollfd *fds = NULL;
+	SERVER *srv;
 	CONN *conn;
-	int fd;
-	int ret = -1;
-	int i;
+	int nfds;
 
-	fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd < 0) {
-		report_error("Cannot create socket");
-		goto err;
-	}
-
-	if (! (sun = malloc(sz)) ) {
-		report_error("Cannot allocate file name %s", path);
-		goto err_close;
-	}
-
-	sun->sun_family = AF_UNIX;
-	strcpy(sun->sun_path, path);
-	for (i = 1; i >= 0; --i) {
-		if (!i)
-			unlink(path);
-		if (!bind(fd, (struct sockaddr *) sun, sz))
-			break;
-	}
-	free(sun);
-	if (i < 0) {
-		report_error("Cannot bind socket to %s", path);
-		goto err_close;
-	}
-
-	if (listen(fd, LISTEN_BACKLOG)) {
-		report_error("Cannot listen on %s", path);
-		goto err_unlink;
-	}
-
-	terminating = 0;
-	while (!terminating) {
-		int nfds = nconnections + 1;
-		if ( !(fds = realloc(fds, nfds * sizeof(struct pollfd))) ) {
+	while ( (nfds = nconnections + nservers) != 0) {
+		struct pollfd *fds =
+			realloc(*pfds, nfds * sizeof(struct pollfd));
+		if (!fds) {
 			report_error("Cannot allocate poll FDs");
-			goto err_unlink;
+			return -1;
 		}
+		*pfds = fds;
 
-		struct pollfd *pfd = fds;
+		struct pollfd *pfd = *pfds;
 		for (conn = connections; conn; conn = conn->next)
 			*pfd++ = conn->pfd;
-		pfd->fd = fd;
-		pfd->events = POLLIN;
+		for (srv = servers; srv; srv = srv->next)
+			*pfd++ = srv->pfd;
 
-		int todo = poll(fds, nfds, -1);
+		int todo = poll(*pfds, nfds, -1);
 		if (todo < 0) {
 			report_error("Poll failed");
-			goto err_unlink;
+			return -1;
 		}
 
 		conn = connections;
-		for (pfd = fds; todo; ++pfd) {
+		for (pfd = *pfds; todo; ++pfd) {
 			CONN *nconn = conn ? conn->next : NULL;
 			if (pfd->revents) {
 				--todo;
@@ -965,16 +1017,22 @@ run_server(const char *path)
 		}
 	}
 
-	ret = 0;
+	return 0;
+}
 
- err_unlink:
-	unlink(path);
- err_close:
-	close(fd);
- err:
+static int
+run_server(const char *path)
+{
+	struct pollfd *fds = NULL;
+
+	if (!server_init(path))
+		return -1;
+
+	int ret = run_server_loop(&fds);
 	if (fds)
 		free(fds);
 
+	server_destroyall();
 	conn_destroyall();
 
 	return ret;
