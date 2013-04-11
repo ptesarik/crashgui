@@ -29,7 +29,7 @@ public:
     MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
-    QByteArray readMemory(const QString &addr, unsigned int length, MEM_TYPE mt = KVADDR);
+    QByteArray readMemory(QString &addr, unsigned int length, MEM_TYPE mt = KVADDR);
 
 protected:
     int server;

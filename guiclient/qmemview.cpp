@@ -3,6 +3,7 @@
 QMemView::QMemView(QWidget *parent) :
     QLabel(parent),
     mainWindow(NULL),
+    vsb(this),
     addr(0),
     fileName("")
 {
@@ -13,6 +14,23 @@ QMemView::QMemView(QWidget *parent) :
     fnt.setFamily("Courier");
     fnt.setFixedPitch(true);
     setFont(fnt);
+
+    vsb.setRange(0, 0x7FFFFFFF);
+    vsb.setVisible(true);
+}
+
+void QMemView::resizeEvent(QResizeEvent *event)
+{
+    QSize sbSize = event->size();
+    sbSize.setWidth(vsb.width());
+
+    QResizeEvent sbEvent(sbSize, vsb.size());
+
+    // Any base class handling?
+    QLabel::resizeEvent(event);
+
+    // Force the scrollbar to change height only
+    vsb.resize(sbSize);
 }
 
 void QMemView::setAddr(unsigned long long newAddr, bool refresh)
