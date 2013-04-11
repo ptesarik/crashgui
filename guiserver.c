@@ -61,11 +61,14 @@ struct conn {
 	enum conn_status status;
 	const struct proto_command *lastcmd;
 
+	/* Server termination */
 	enum {
 		conn_running,
 		conn_bye_pending,
+		conn_bye_xmit,
 		conn_bye_sent
 	} term_state;
+	short term_events;
 
 	/* current input line */
 	struct getline line;
@@ -96,10 +99,6 @@ struct conn {
 
 	union {
 		struct {
-			conn_handler_t handler;
-			int tagged;
-		} terminate;
-		struct {
 			read_handler_t handler;
 			unsigned long size;
 		} read;
@@ -112,7 +111,6 @@ struct conn {
 };
 
 /* Connection state handlers */
-static CONN_STATUS resume_after_bye(CONN *conn);
 static CONN_STATUS finish_response(CONN *conn);
 static CONN_STATUS conn_readcommand(CONN *conn);
 static CONN_STATUS conn_getcommand(CONN *conn);
@@ -340,6 +338,29 @@ disconnect(CONN *conn)
 	}
 }
 
+static int
+check_bye(CONN *conn)
+{
+	static const char msg_bye[] = "* BYE Server terminating\r\n";
+
+	if (conn->iotodo)
+		return 0;
+
+	if (conn->term_state == conn_bye_pending) {
+		conn->term_events = conn->pfd.events;
+		conn->iobuf = (char*)msg_bye;
+		conn->iotodo = sizeof msg_bye - 1;
+		conn->pfd.events = POLLOUT;
+		conn->term_state = conn_bye_xmit;
+		return 1;
+	} else if (conn->term_state == conn_bye_xmit) {
+		disconnect(conn);
+		conn->pfd.events = conn->term_events;
+		conn->term_state = conn_bye_sent;
+	}
+	return 0;
+}
+
 static CONN_STATUS
 ensure_buffer(CONN *conn, size_t size)
 {
@@ -429,19 +450,6 @@ conn_respond(CONN *conn, int tagged)
 	static const char msg_completed[] = " completed";
 	static const char msg_failed[] = " failed";
 
-	if (conn->term_state == conn_bye_pending) {
-		static const char msg_bye[] = "* BYE Server terminating\r\n";
-		conn->iobuf = (char*)msg_bye;
-		conn->iotodo = sizeof msg_bye - 1;
-		conn->pfd.events = POLLOUT;
-
-		conn->terminate.handler = conn->handler;
-		conn->terminate.tagged = tagged;
-		conn->handler = resume_after_bye;
-
-		return conn_ok;
-	}
-
 	size_t taglen = tagged ? conn->taglen : 0;
 
 	const char *cond =
@@ -511,16 +519,6 @@ finish_response(CONN *conn)
 {
 	conn->handler = conn_getcommand;
 	return conn_respond(conn, 1);
-}
-
-static CONN_STATUS
-resume_after_bye(CONN *conn)
-{
-	disconnect(conn);
-
-	conn->term_state = conn_bye_sent;
-	conn->handler = conn->terminate.handler;
-	return conn_respond(conn, conn->terminate.tagged);
 }
 
 static CONN_STATUS
@@ -983,7 +981,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 	else
 		status = conn->handler(conn);
 
-	while (status == conn_ok && !conn->pfd.events)
+	while (status == conn_ok && !conn->pfd.events && !check_bye(conn))
 		status = conn->handler(conn);
 
 	if (status == conn_fatal || status == conn_eof || conn->pfd.fd < 0)
@@ -1026,8 +1024,10 @@ run_server_loop(struct pollfd **pfds)
 		*pfds = fds;
 
 		struct pollfd *pfd = *pfds;
-		for (conn = connections; conn; conn = conn->next)
+		for (conn = connections; conn; conn = conn->next) {
+			check_bye(conn);
 			*pfd++ = conn->pfd;
+		}
 		for (srv = servers; srv; srv = srv->next)
 			*pfd++ = srv->pfd;
 
