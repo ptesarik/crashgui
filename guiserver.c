@@ -230,6 +230,13 @@ conn_done(CONN *conn)
 	free (conn);
 }
 
+static void
+conn_destroyall(void)
+{
+	while (connections)
+		conn_done(connections);
+}
+
 static CONN_STATUS
 ensure_buffer(CONN *conn, size_t size)
 {
@@ -965,10 +972,10 @@ run_server(const char *path)
  err_close:
 	close(fd);
  err:
-	while (connections)
-		conn_done(connections);
 	if (fds)
 		free(fds);
+
+	conn_destroyall();
 
 	return ret;
 }
