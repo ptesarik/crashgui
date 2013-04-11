@@ -37,7 +37,6 @@ typedef enum conn_status {
 	conn_dump,		/* DUMP response */
 	conn_symbol,		/* SYMBOL response */
 
-	conn_again,		/* More data needed */
 	conn_eof,		/* End of stream */
 	conn_fatal = -1		/* Fatal error */
 } CONN_STATUS;
