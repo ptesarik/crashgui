@@ -89,18 +89,18 @@ MEM_TYPE MemViewChooser::memoryType()
     {
         return KVADDR;
     }
-    if (ui->rbUVM)
+    if (ui->rbUVM->isChecked())
     {
         return UVADDR;
     }
-    if (ui->rbPhys)
+    if (ui->rbPhys->isChecked())
     {
         return PHYSADDR;
     }
 
     // TBD: XENMACHADDR
 
-    if (ui->rbFile)
+    if (ui->rbFile->isChecked())
     {
         return FILEADDR;
     }
