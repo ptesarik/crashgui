@@ -319,7 +319,7 @@ QString QMemView::createMemoryLine(unsigned long offset)
 
 void QMemView::do_refresh()
 {
-    QString readAddrStr = QString::number(addr, 10);
+    QString readAddrStr = QString::number(addr, 16);
     unsigned long long readAddr;
     bool ok;
 
@@ -333,7 +333,7 @@ void QMemView::do_refresh()
     }
     vsb.setValue(curScroll);
 
-    currentView = mainWindow->readMemory(readAddrStr, 4096);
+    currentView = mainWindow->readMemory(readAddrStr, 4096, memType);
 
     // Use the response address for display
     readAddr = readAddrStr.toULongLong(&ok);

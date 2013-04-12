@@ -18,6 +18,7 @@ public:
     ~MemViewChooser();
 
     unsigned long long addr();
+    QString symbol();
     bool charView();
     OBJECT_ENDIANITY objectEndianity();
     OBJECT_SIZE objectSize();
