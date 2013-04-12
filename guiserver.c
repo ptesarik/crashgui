@@ -961,20 +961,33 @@ COMMAND_on_read(CONN *conn, char *tok, size_t len)
 	if (!ct)
 		return set_response(conn, cond_no, "Command not found");
 
-	char *buffer;
+	char *buffer = NULL;
 	size_t bufferlen;
 	FILE *memf = open_memstream(&buffer, &bufferlen);
 	if (!memf)
 		return set_response(conn, cond_bad, strerror(errno));
 
 	FILE *prevfp = fp;
-	fp = memf;
-	pc->curcmd = ct->name;
-	pc->cmdgencur++;
-	ct->func();
+	FILE *preverr = stderr;
+	jmp_buf prev_main_loop_env;
+	memcpy(&prev_main_loop_env, &pc->main_loop_env, sizeof(jmp_buf));
+
+        if (setjmp(pc->main_loop_env)) {
+		conn->cond = cond_no;
+	} else {
+		fp = stderr = memf;
+		pc->curcmd = ct->name;
+		pc->cmdgencur++;
+		ct->func();
+	}
 	fp = prevfp;
-	if (fclose(memf))
+	stderr = preverr;
+	memcpy(&pc->main_loop_env, &prev_main_loop_env, sizeof(jmp_buf));
+	if (fclose(memf)) {
+		if (buffer)
+			free(buffer);
 		return set_response(conn, cond_bad, strerror(errno));
+	}
 
 	if ( (status = send_untagged(conn, cond_command, "{%lu}",
 				     (unsigned long) bufferlen)) != conn_ok)
