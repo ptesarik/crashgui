@@ -39,6 +39,7 @@ protected:
     
     bool openServer(QString path);
     bool closeServer();
+    bool terminateServer();
 
     QString sendCommand(const QString &cmd, const QString &Args);
     QString getReply();
@@ -47,7 +48,10 @@ protected:
     QString readAtom(QString &cmd);
 
 private slots:
+    void on_fileNew();
     void on_fileOpen();
+    void on_fileClose();
+    void on_fileTerm();
     void on_MemView();
 
 private:
@@ -57,7 +61,10 @@ private:
     QMenu *menu_File;
     QMenu *menu_Mem;
     QMenu *menu_Help;
+    QAction *action_New;
     QAction *action_Open;
+    QAction *action_Close;
+    QAction *action_Term;
     QAction *action_MemView;
     QAction *actionE_xit;
     QAction *action_About;

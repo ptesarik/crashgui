@@ -44,7 +44,10 @@ void MainWindow::retranslateUI()
     menu_File->setTitle(QApplication::translate("MainWindow", "&File", 0, QApplication::UnicodeUTF8));
     menu_Mem->setTitle(QApplication::translate("MainWindow", "&Memory", 0, QApplication::UnicodeUTF8));
     menu_Help->setTitle(QApplication::translate("MainWindow", "&Help", 0, QApplication::UnicodeUTF8));
+    action_New->setText(QApplication::translate("MainWindow", "&New", 0, QApplication::UnicodeUTF8));
     action_Open->setText(QApplication::translate("MainWindow", "&Open", 0, QApplication::UnicodeUTF8));
+    action_Close->setText(QApplication::translate("MainWindow", "&Close", 0, QApplication::UnicodeUTF8));
+    action_Term->setText(QApplication::translate("MainWindow", "&Terminate Server", 0, QApplication::UnicodeUTF8));
     action_MemView->setText(QApplication::translate("MainWindow", "&View", 0, QApplication::UnicodeUTF8));
     actionE_xit->setText(QApplication::translate("MainWindow", "E&xit", 0, QApplication::UnicodeUTF8));
     action_About->setText(QApplication::translate("MainWindow", "&About", 0, QApplication::UnicodeUTF8));
@@ -57,8 +60,14 @@ void MainWindow::setupUI()
 
 //    resize(460, 378);
 
+    action_New = new QAction(this);
+    action_New->setObjectName(QString::fromUtf8("action_New"));
     action_Open = new QAction(this);
     action_Open->setObjectName(QString::fromUtf8("action_Open"));
+    action_Close = new QAction(this);
+    action_Close->setObjectName(QString::fromUtf8("action_Close"));
+    action_Term = new QAction(this);
+    action_Term->setObjectName(QString::fromUtf8("action_Term"));
     action_MemView = new QAction(this);
     action_MemView->setObjectName(QString::fromUtf8("action_MemView"));
     actionE_xit = new QAction(this);
@@ -92,7 +101,10 @@ void MainWindow::setupUI()
     menuBar->addAction(menu_File->menuAction());
     menuBar->addAction(menu_Mem->menuAction());
     menuBar->addAction(menu_Help->menuAction());
+    menu_File->addAction(action_New);
     menu_File->addAction(action_Open);
+    menu_File->addAction(action_Close);
+    menu_File->addAction(action_Term);
     menu_File->addSeparator();
     menu_File->addAction(actionE_xit);
     menu_Mem->addAction(action_MemView);
@@ -101,26 +113,36 @@ void MainWindow::setupUI()
     retranslateUI();
 
     QObject::connect(actionE_xit, SIGNAL(triggered()), this, SLOT(close()));
+    QObject::connect(action_New, SIGNAL(triggered()), this, SLOT(on_fileNew()));
     QObject::connect(action_Open, SIGNAL(triggered()), this, SLOT(on_fileOpen()));
+    QObject::connect(action_Close, SIGNAL(triggered()), this, SLOT(on_fileClose()));
+    QObject::connect(action_Term, SIGNAL(triggered()), this, SLOT(on_fileTerm()));
     QObject::connect(action_MemView, SIGNAL(triggered()), this, SLOT(on_MemView()));
+}
+
+void MainWindow::on_fileNew()
+{
 }
 
 void MainWindow::on_fileOpen()
 {
-    QMdiSubWindow *memframe;
-    QMemView *memview;
-
-    currentFilename = "";
+    closeServer();
     currentFilename = QFileDialog::getOpenFileName(this,
          tr("Open File"), env.value("HOME"), tr("Files (*)"));
     if (!currentFilename.isEmpty())
     {
-        memview = new QMemView;
-        openServer("/home/dmair/crashgui.socket");
-        memview->setFileName(currentFilename);
-        memframe = mdiView->addSubWindow(memview);
-        memframe->show();
+        openServer(currentFilename);
     }
+}
+
+void MainWindow::on_fileClose()
+{
+    closeServer();
+}
+
+void MainWindow::on_fileTerm()
+{
+    terminateServer();
 }
 
 void MainWindow::on_MemView()
@@ -142,7 +164,10 @@ void MainWindow::on_MemView()
         charView = settings.charView();
         mt = settings.memoryType();
 
-        openServer("/home/dmair/crashgui.socket");
+        if (currentFilename.length() == 0)
+        {
+            openServer(currentFilename);
+        }
 
         addr = settings.addr();
         if (addr == BAD_SYMBOL)
@@ -264,6 +289,28 @@ err:
 }
 
 bool MainWindow::closeServer()
+{
+    QString result;
+
+    if (server != -1)
+    {
+        qDebug() << "Terminating server...";
+        result = sendCommand(QString("DISCONNECT"), QString(""));
+
+        if (::fclose(f) == 0)
+        {
+            f = NULL;
+            server = -1;
+            currentFilename = "";
+        }
+
+        qDebug() << "Done";
+    }
+
+    return (server == -1);
+}
+
+bool MainWindow::terminateServer()
 {
     QString result;
 
