@@ -1293,11 +1293,15 @@ run_server_loop(struct pollfd **pfds)
 static int
 run_server(const char *path)
 {
-	struct pollfd *fds = NULL;
+	SERVER *server = server_init(path);
 
-	if (!server_init(path))
+	if (!server)
 		return -1;
 
+	fprintf(fp, "%s: now listening on %s\n",
+		MODULE_NAME, server->sun.sun_path);
+
+	struct pollfd *fds = NULL;
 	int ret = run_server_loop(&fds);
 	if (fds)
 		free(fds);
