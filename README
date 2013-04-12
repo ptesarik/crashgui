@@ -52,6 +52,28 @@ Commands
                S: A025 OK TERMINATE completed
                (Server and client then close the connection)
 
+* COMMAND command
+
+   Arguments:  command line to execute
+
+   Responses:  REQUIRED untagged responses: COMMAND
+
+   Result:     OK - command was executed
+               NO - the command could not be executed
+               BAD - command unknown or arguments invalid
+
+      The COMMAND command executes a given crash command line and sends
+      the output back as a string (usually a literal).
+
+   Example:    C: A006 COMMAND "net"
+               S: * DUMP {148}
+               S: NET_DEVICE  NAME   IP ADDRESS(ES)
+               S:  f4978800   lo     127.0.0.1
+               S:  f6af8000   eth0   192.168.84.68
+               S:  f41bf000   wlan0  
+               S:  c8a85000   tun0   10.100.200.1
+               S: A006 OK COMMAND completed
+
 * READMEM command
 
    Arguments:  start address

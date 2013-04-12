@@ -47,6 +47,7 @@ typedef enum conn_cond {
 	cond_bad,
 	cond_no,
 	cond_bye,
+	cond_command,
 	cond_dump,
 	cond_symbol,
 	cond_task,
@@ -109,7 +110,7 @@ struct conn {
 		struct {
 			void *buffer;
 			unsigned long bytecnt;
-		} readmem;
+		} literal;
 		struct {
 			struct syment *sp;
 			const char *modname;
@@ -127,10 +128,10 @@ static CONN_STATUS conn_readcommand(CONN *conn);
 static CONN_STATUS conn_getcommand(CONN *conn);
 static CONN_STATUS literal_data_raw(CONN *conn);
 static CONN_STATUS literal_data_done(CONN *conn);
+static CONN_STATUS send_literal_data(CONN *conn);
+static CONN_STATUS send_literal_done(CONN *conn);
 static CONN_STATUS send_symbol_data(CONN *conn);
 static CONN_STATUS send_task_data(CONN *conn);
-static CONN_STATUS READMEM_size_sent(CONN *conn);
-static CONN_STATUS READMEM_done(CONN *conn);
 
 struct proto_command {
 	size_t len;
@@ -140,6 +141,7 @@ struct proto_command {
 
 static CONN_STATUS do_DISCONNECT(CONN *conn);
 static CONN_STATUS do_TERMINATE(CONN *conn);
+static CONN_STATUS do_COMMAND(CONN *conn);
 static CONN_STATUS do_READMEM(CONN *conn);
 static CONN_STATUS do_SYMBOL(CONN *conn);
 static CONN_STATUS do_ADDRESS(CONN *conn);
@@ -150,6 +152,7 @@ static CONN_STATUS do_PID(CONN *conn);
 static const struct proto_command cmds[] = {
 	DEFINE_CMD(DISCONNECT),
 	DEFINE_CMD(TERMINATE),
+	DEFINE_CMD(COMMAND),
 	DEFINE_CMD(READMEM),
 	DEFINE_CMD(SYMBOL),
 	DEFINE_CMD(ADDRESS),
@@ -489,6 +492,7 @@ conn_respond(CONN *conn, int tagged, CONN_COND cond)
 		[cond_no] =     "NO",
 		[cond_bad] =    "BAD",
 		[cond_bye] =    "BYE",
+		[cond_command] = "COMMAND",
 		[cond_dump] =   "DUMP",
 		[cond_symbol] = "SYMBOL",
 		[cond_task] =   "TASK",
@@ -770,6 +774,35 @@ send_untagged(CONN *conn, CONN_COND cond, const char *fmt, ...)
 	return conn_respond(conn, 0, cond);
 }
 
+static CONN_STATUS
+send_literal(CONN *conn, void *buffer, size_t bytecnt)
+{
+	conn->literal.buffer = buffer;
+	conn->literal.bytecnt = bytecnt;
+	conn->handler = send_literal_data;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_literal_data(CONN *conn)
+{
+	conn->iobuf = conn->literal.buffer;
+	conn->iotodo = conn->literal.bytecnt;
+	conn->pfd.events = POLLOUT;
+
+	conn->handler = send_literal_done;
+	return conn_ok;
+}
+
+static CONN_STATUS
+send_literal_done(CONN *conn)
+{
+	free(conn->literal.buffer);
+
+	conn->handler = finish_response;
+	return conn_ok;
+}
+
 /* This function returns NULL if sp is invalid */
 static const char *
 get_syment_module(struct syment *sp)
@@ -890,9 +923,83 @@ do_TERMINATE(CONN *conn)
 	return conn_ok;
 }
 
+static CONN_STATUS COMMAND_on_read(CONN *conn, char *tok, size_t len);
+
+static CONN_STATUS
+do_COMMAND(CONN *conn)
+{
+	/* Get the symbol name */
+	if (read_space(conn))
+		return conn_ok;
+	if (read_astring(conn, COMMAND_on_read))
+		return conn_ok;
+	return conn_ok;
+}
+
+static CONN_STATUS
+COMMAND_on_read(CONN *conn, char *tok, size_t len)
+{
+	CONN_STATUS status;
+
+	if (ensure_buffer(conn, len + 1))
+		return set_response(conn, cond_bad, strerror(errno));
+	if (tok != conn->buf) {
+		memcpy(conn->buf, tok, len);
+		tok = conn->buf;
+	}
+	tok[len] = 0;
+
+	/* Clean out all linefeeds and leading/trailing spaces */
+	clean_line(tok);
+
+	/* Setup the global argcnt and args[] array */
+        argcnt = parse_line(tok, args);
+
+        optind = argerrs = 0;
+
+        struct command_table_entry *ct = get_command_table_entry(args[0]);
+	if (!ct)
+		return set_response(conn, cond_no, "Command not found");
+
+	char *buffer = NULL;
+	size_t bufferlen;
+	FILE *memf = open_memstream(&buffer, &bufferlen);
+	if (!memf)
+		return set_response(conn, cond_bad, strerror(errno));
+
+	FILE *prevfp = fp;
+	FILE *preverr = stderr;
+	jmp_buf prev_main_loop_env;
+	memcpy(&prev_main_loop_env, &pc->main_loop_env, sizeof(jmp_buf));
+
+        if (setjmp(pc->main_loop_env)) {
+		conn->cond = cond_no;
+	} else {
+		fp = stderr = memf;
+		pc->curcmd = ct->name;
+		pc->cmdgencur++;
+		ct->func();
+	}
+	fp = prevfp;
+	stderr = preverr;
+	memcpy(&pc->main_loop_env, &prev_main_loop_env, sizeof(jmp_buf));
+	if (fclose(memf)) {
+		if (buffer)
+			free(buffer);
+		return set_response(conn, cond_bad, strerror(errno));
+	}
+
+	if ( (status = send_untagged(conn, cond_command, "{%lu}",
+				     (unsigned long) bufferlen)) != conn_ok)
+		return status;
+
+	return send_literal(conn, buffer, bufferlen);
+}
+
 static CONN_STATUS
 do_READMEM(CONN *conn)
 {
+	CONN_STATUS status;
 	char *tok;
 	size_t len;
 
@@ -905,10 +1012,11 @@ do_READMEM(CONN *conn)
 		return set_response(conn, cond_bad, "Invalid start address");
 
 	/* Get byte count */
+	unsigned long bytecnt;
 	if (read_space(conn))
 		return conn_ok;
 	if (read_atom(conn, &tok, &len) ||
-	    convert_num(tok, len, &conn->readmem.bytecnt, 16))
+	    convert_num(tok, len, &bytecnt, 16))
 		return set_response(conn, cond_bad, "Invalid byte count");
 
 	/* Get (optional) memory type */
@@ -940,39 +1048,22 @@ do_READMEM(CONN *conn)
 			return too_many_args(conn);
 	}
 
-	conn->readmem.buffer = malloc(conn->readmem.bytecnt);
-	if (!conn->readmem.buffer)
+	char *buffer = malloc(bytecnt);
+	if (!buffer)
 		return set_response(conn, cond_bad,
 				    "Buffer allocation failure");
 
-	if (!readmem(addr, memtype,
-		     conn->readmem.buffer, conn->readmem.bytecnt,
-		     "crashgui", RETURN_ON_ERROR))
+	if (!readmem(addr, memtype, buffer, bytecnt,
+		     "crashgui", RETURN_ON_ERROR)) {
+		free(buffer);
 		return set_response(conn, cond_no, "Read error");
+	}
 
-	conn->handler = READMEM_size_sent;
-	return send_untagged(conn, cond_dump, "%lx {%lu}",
-			     addr, conn->readmem.bytecnt);
-}
+	if ( (status = send_untagged(conn, cond_dump, "%lx {%lu}",
+				     addr, bytecnt)) != conn_ok)
+		return status;
 
-static CONN_STATUS
-READMEM_size_sent(CONN *conn)
-{
-	conn->iobuf = conn->readmem.buffer;
-	conn->iotodo = conn->readmem.bytecnt;
-	conn->pfd.events = POLLOUT;
-
-	conn->handler = READMEM_done;
-	return conn_ok;
-}
-
-static CONN_STATUS
-READMEM_done(CONN *conn)
-{
-	free(conn->readmem.buffer);
-
-	conn->handler = finish_response;
-	return conn_ok;
+	return send_literal(conn, buffer, bytecnt);
 }
 
 static CONN_STATUS SYMBOL_on_read(CONN *conn, char *tok, size_t len);
@@ -1098,7 +1189,7 @@ handle_conn(CONN *conn, struct pollfd *pfd)
 }
 
 static int
-handle_accept(struct pollfd *pfd)
+handle_srv(SERVER *srv, struct pollfd *pfd)
 {
 	int sessfd = accept(pfd->fd, NULL, NULL);
 	CONN *newconn;
@@ -1112,6 +1203,36 @@ handle_accept(struct pollfd *pfd)
 		return -1;
 	}
 	return 0;
+}
+
+static void
+handle_events(struct pollfd *pfds, int todo)
+{
+	struct pollfd *pfd = pfds;
+
+	/* Check all connections */
+	CONN *conn = connections;
+	while (conn && todo) {
+		CONN *nconn = conn->next;
+		if (pfd->revents) {
+			--todo;
+			handle_conn(conn, pfd);
+		}
+		++pfd;
+		conn = nconn;
+	}
+
+	/* Check all servers */
+	SERVER *srv = servers;
+	while (srv && todo) {
+		SERVER *nsrv = srv->next;
+		if (pfd->revents) {
+			--todo;
+			handle_srv(srv, pfd);
+		}
+		++pfd;
+		srv = nsrv;
+	}
 }
 
 static int
@@ -1163,18 +1284,7 @@ run_server_loop(struct pollfd **pfds)
 			return -1;
 		}
 
-		conn = connections;
-		for (pfd = *pfds; todo; ++pfd) {
-			CONN *nconn = conn ? conn->next : NULL;
-			if (pfd->revents) {
-				--todo;
-				if (conn)
-					handle_conn(conn, pfd);
-				else
-					handle_accept(pfd);
-			}
-			conn = nconn;
-		}
+		handle_events(*pfds, todo);
 	}
 
 	return 0;
@@ -1242,4 +1352,6 @@ guiserver_init(void)
 void __attribute__((destructor))
 guiserver_fini(void)
 {
+	server_destroyall();
+	conn_destroyall();
 }
