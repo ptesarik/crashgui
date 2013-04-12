@@ -128,34 +128,53 @@ void MainWindow::on_MemView()
     unsigned long long addr;
     OBJECT_SIZE objSize;
     OBJECT_ENDIANITY endianity;
+    MEM_TYPE mt;
     bool charView;
+    QString symbolName;
     QMdiSubWindow *memframe;
     QMemView *memview;
     MemViewChooser settings;
 
     if (settings.exec() == QDialog::Accepted)
     {
-        addr = settings.addr();
         objSize = settings.objectSize();
         endianity = settings.objectEndianity();
         charView = settings.charView();
-        memview = new QMemView;
+        mt = settings.memoryType();
+
         openServer("/home/dmair/crashgui.socket");
-        qDebug() << "Server is: " << server;
-        memview->setMainWindow(this);
-        memview->setFileName(currentFilename);
-        memview->setAddr(addr);
-        if (charView)
-            memview->setCharView();
+
+        addr = settings.addr();
+        if (addr == BAD_SYMBOL)
+        {
+            symbolName = settings.symbol();
+            addr = symbolAddress(symbolName);
+        }
+
+        if (addr != BAD_SYMBOL)
+        {
+            memview = new QMemView;
+            qDebug() << "Server is: " << server;
+            memview->setMainWindow(this);
+            memview->setFileName(currentFilename);
+            memview->setAddr(addr);
+            if (charView)
+                memview->setCharView();
+            else
+            {
+                memview->setCharView(false);
+                memview->setObjectSize(objSize);
+                memview->setEndianity(endianity);
+                memview->setMemType(mt);
+            }
+            memframe = mdiView->addSubWindow(memview);
+            memframe->show();
+            memview->do_refresh();
+        }
         else
         {
-            memview->setCharView(false);
-            memview->setObjectSize(objSize);
-            memview->setEndianity(endianity);
+            qDebug() << "ERROR ADDRESS WITH MEMVIEWER";
         }
-        memframe = mdiView->addSubWindow(memview);
-        memframe->show();
-        memview->do_refresh();
     }
 }
 
@@ -469,6 +488,52 @@ QByteArray MainWindow::readMemory(QString &addr, unsigned int length, MEM_TYPE m
         // Get the remainder of the second line
         reply = getReply();
         qDebug() << "Second line reply length is " << reply.length();
+    }
+
+    return result;
+}
+
+unsigned long long MainWindow::symbolAddress(QString symName)
+{
+    QString reply;
+    QString atom;
+    QString symAddr;
+    bool ok;
+    unsigned long long result = BAD_SYMBOL;
+
+    reply = sendCommand(QString("SYMBOL"), symName);
+    qDebug() << "SYMBOL reply is " << reply;
+    if (reply.length() > 0)
+    {
+        // Skip the tag
+        atom = readAtom(reply);
+
+        // Get the command
+        atom = readAtom(reply);
+        if (atom.startsWith("SYMBOL"))
+        {
+            // Get the address in the response
+            symAddr = readAtom(reply);
+            qDebug() << "Address atom is " << symAddr;
+
+            // Get the rest of the reply
+            reply = getReply();
+
+            // Is it OK?
+            atom = readAtom(reply);
+            atom = readAtom(reply);
+            if (atom != "OK")
+            {
+                result = BAD_SYMBOL;
+            }
+            else
+            {
+                result = symAddr.toULongLong(&ok, 16);
+                qDebug() << "Address converts to " << result;
+                if (!ok)
+                    result = BAD_SYMBOL;
+            }
+        }
     }
 
     return result;

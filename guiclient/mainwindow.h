@@ -13,6 +13,8 @@
 
 #include "memtypes.h"
 
+#define BAD_SYMBOL (0xDEAD53594D)
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -22,6 +24,7 @@ public:
     ~MainWindow();
 
     QByteArray readMemory(QString &addr, unsigned int length, MEM_TYPE mt = PHYSADDR);
+    unsigned long long symbolAddress(QString symName);
 
 protected:
     int server;

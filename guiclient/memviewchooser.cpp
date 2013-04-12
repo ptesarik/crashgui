@@ -31,8 +31,13 @@ unsigned long long MemViewChooser::addr()
     else
     {
         // TBD - what's the error case
-        return 0xFFFFFFFFFFFFFFFF;
+        return BAD_SYMBOL;
     }
+}
+
+QString MemViewChooser::symbol()
+{
+    return ui->startAddr->text();
 }
 
 bool MemViewChooser::charView()
