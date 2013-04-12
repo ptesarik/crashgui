@@ -116,7 +116,7 @@ void MainWindow::on_fileOpen()
     if (!currentFilename.isEmpty())
     {
         memview = new QMemView;
-        openServer("/home/dmair/crashgui.socket");
+        openServer(currentFilename);
         memview->setFileName(currentFilename);
         memframe = mdiView->addSubWindow(memview);
         memframe->show();
