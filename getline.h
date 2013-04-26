@@ -20,11 +20,8 @@
 #define __GETLINE_H
 
 enum getline_status {
-	GLS_FINAL = 0,		/* incomplete last line of a file (not
-				   terminated by a newline) */
-	GLS_ONE,		/* complete line, no more lines buffered */
-	GLS_MORE,		/* complete line, at least one more line
-				   buffered already */
+	GLS_FINAL = 0,		/* unterminated last line of a file */
+	GLS_OK,			/* complete line (terminated by a newline) */
 
 	GLS_AGAIN = -1,		/* not a complete line yet (would block) */
 	GLS_EOF = -2,		/* end-of-file reached */
@@ -96,8 +93,16 @@ enum getline_status cbgetraw(struct getline *s, size_t length,
 			     GETLINEFUNC callback, void *cbdata);
 enum getline_status fdgetraw(struct getline *s, size_t length, int fd);
 
+/* Returns non-zero if more lines are buffered already */
+static inline int
+getline_hasmore(struct getline *s)
+{
+	return !!memchr(s->data + s->len, '\n', s->end - (s->data + s->len));
+}
+
 /* Get the number of buffered (and not yet read) bytes */
-static inline size_t getline_buffered(struct getline *s)
+static inline size_t
+getline_buffered(struct getline *s)
 {
 	return s->end - (s->data + s->len);
 }

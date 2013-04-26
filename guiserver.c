@@ -435,7 +435,7 @@ static CONN_STATUS
 conn_readcommand(CONN * conn)
 {
 	conn->gls = fdgetline(&conn->line, conn->pfd.fd);
-	if (conn->gls < GLS_ONE) {
+	if (conn->gls < GLS_OK) {
 		if (conn->gls == GLS_AGAIN)
 			return conn_ok;
 		if (conn->gls == GLS_EOF || conn->gls == GLS_FINAL)

@@ -36,9 +36,7 @@ cbgetline(struct getline *s, GETLINEFUNC callback, void *cbdata)
 		s->data += s->len;
 		if ( (p = memchr(s->data, '\n', s->end - s->data)) ) {
 			s->len = p - s->data + 1;
-			return memchr(p + 1, '\n', s->end - p - 1)
-				? GLS_MORE
-				: GLS_ONE;
+			return GLS_OK;
 		}
 		memmove(s->buf, s->data, s->end - s->data + 1);
 		s->end -= s->data - s->buf;
@@ -65,9 +63,7 @@ cbgetline(struct getline *s, GETLINEFUNC callback, void *cbdata)
 
 	if ( (p = memchr(s->data, '\n', s->end - s->data)) ) {
 		s->len = p - s->buf + 1;
-		return memchr(p + 1, '\n', s->end - p - 1)
-			? GLS_MORE
-			: GLS_ONE;
+		return GLS_OK;
 	} else if (!res) {
 		s->len = s->end - s->data;
 		return s->len ? GLS_FINAL : GLS_EOF;
@@ -87,9 +83,7 @@ cbgetraw(struct getline *s, size_t length,
 		p = s->data + length;
 		if (p <= s->end) {
 			s->len = length;
-			return memchr(p, '\n', s->end - p)
-				? GLS_MORE
-				: GLS_ONE;
+			return GLS_OK;
 		}
 		memmove(s->buf, s->data, s->end - s->data + 1);
 		s->end -= s->data - s->buf;
@@ -117,9 +111,7 @@ cbgetraw(struct getline *s, size_t length,
 	p = s->data + length;
 	if (p <= s->end) {
 		s->len = length;
-		return memchr(p, '\n', s->end - p)
-			? GLS_MORE
-			: GLS_ONE;
+		return GLS_OK;
 	} else if (!res) {
 		s->len = s->end - s->buf;
 		return s->len ? GLS_FINAL : GLS_EOF;
