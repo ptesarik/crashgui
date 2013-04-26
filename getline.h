@@ -107,4 +107,11 @@ getline_buffered(struct getline *s)
 	return s->end - (s->data + s->len);
 }
 
+/* Purge buffered contents */
+static inline void
+getline_clearbuf(struct getline *s)
+{
+	s->end = s->data + s->len;
+}
+
 #endif	/* __GETLINE_H */
