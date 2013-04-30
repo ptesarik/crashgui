@@ -77,7 +77,6 @@ struct conn {
 
 	/* current input line */
 	struct getline line;
-	enum getline_status gls;
 
 	/* current tag */
 	char *tag;
@@ -434,11 +433,11 @@ static CONN_STATUS run_command(CONN *conn);
 static CONN_STATUS
 conn_readcommand(CONN * conn)
 {
-	conn->gls = fdgetline(&conn->line, conn->pfd.fd);
-	if (conn->gls < GLS_OK) {
-		if (conn->gls == GLS_AGAIN)
+	enum getline_status gls = fdgetline(&conn->line, conn->pfd.fd);
+	if (gls < GLS_OK) {
+		if (gls == GLS_AGAIN)
 			return conn_ok;
-		if (conn->gls == GLS_EOF || conn->gls == GLS_FINAL)
+		if (gls == GLS_EOF || gls == GLS_FINAL)
 			return conn_eof;
 		return conn_error;
 	}
@@ -481,7 +480,9 @@ conn_getcommand(CONN *conn)
 {
 	conn->pfd.events = POLLIN;
 	conn->handler = conn_readcommand;
-	return conn_ok;
+	return getline_hasmore(&conn->line)
+		? conn_readcommand(conn)
+		: conn_ok;
 }
 
 static CONN_STATUS
@@ -689,7 +690,7 @@ literal_data_raw(CONN *conn)
 	if (avl >= conn->read.size)
 		avl = conn->read.size;
 	if (avl) {
-		conn->gls = fdgetraw(&conn->line, avl, conn->pfd.fd);
+		fdgetraw(&conn->line, avl, conn->pfd.fd);
 		conn->iobuf += conn->line.len;
 		conn->iotodo -= conn->line.len;
 		if (conn->iotodo)
